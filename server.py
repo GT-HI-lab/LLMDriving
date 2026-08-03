@@ -155,7 +155,7 @@ def build_session_config(settings: Settings, assistant_mode: str = "neutral") ->
         "reasoning": {
             "effort": GLOBAL_REALTIME_SETTINGS["reasoning_effort"],
         },
-        "temperature": GLOBAL_REALTIME_SETTINGS["temperature"],
+        # "temperature": GLOBAL_REALTIME_SETTINGS["temperature"],
         "audio": {
             "input": {
                 "noise_reduction": {
