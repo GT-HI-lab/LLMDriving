@@ -22,17 +22,29 @@ from typing import BinaryIO, Dict, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from assistant_modes import ASSISTANT_MODES, GLOBAL_REALTIME_SETTINGS
+from assistant_modes import (
+    ASSISTANT_MODES,
+    CONTROLLER_VERSION,
+    GLOBAL_REALTIME_SETTINGS,
+    PROMPT_VERSION,
+    SHARED_SPEED,
+    SHARED_VOICE,
+    build_instructions,
+    public_study_config,
+    scenario_is_valid,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 STATIC_DIR = PROJECT_ROOT / "web"
 RECORDINGS_DIR = PROJECT_ROOT / "Audio_Record"
 TRANSCRIPTS_DIR = PROJECT_ROOT / "Txt_Log"
+EVENT_LOGS_DIR = PROJECT_ROOT / "Event_Log"
 OPENAI_REALTIME_URL = "https://api.openai.com/v1/realtime/calls"
 MAX_SDP_BYTES = 1_000_000
 MAX_RECORDING_BYTES = 512 * 1024 * 1024
 MAX_TRANSCRIPT_BYTES = 5 * 1024 * 1024
+MAX_EVENT_LOG_BYTES = 5 * 1024 * 1024
 PARTICIPANT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 RECORDING_STEM_PATTERN = re.compile(r"^[0-9]{6}_[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 RECORDING_EXTENSIONS = {
@@ -42,11 +54,13 @@ RECORDING_EXTENSIONS = {
 }
 RECORDING_WRITE_LOCK = Lock()
 TRANSCRIPT_WRITE_LOCK = Lock()
+EVENT_LOG_WRITE_LOCK = Lock()
 API_KEY_PLACEHOLDERS = {
     "",
     "YOUR_OPENAI_API_KEY_HERE",
     "REPLACE_WITH_YOUR_OPENAI_API_KEY",
 }
+
 
 def load_env_file(path: Path) -> None:
     """Load a small .env file without overriding existing environment values."""
@@ -70,9 +84,7 @@ def load_env_file(path: Path) -> None:
 class Settings:
     api_key: str
     model: str
-    cognitive_voice: str
-    neutral_voice: str
-    affective_voice: str
+    voice: str
     transcription_model: str
     input_language: str
     safety_identifier: str
@@ -97,19 +109,12 @@ class Settings:
                 "TLS_CERT_FILE and TLS_KEY_FILE must both be set or both be empty"
             )
 
-        legacy_voice = os.getenv("OPENAI_REALTIME_VOICE", "marin").strip() or "marin"
         return cls(
             api_key=os.getenv("OPENAI_API_KEY", "").strip(),
             model=os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1").strip(),
-            cognitive_voice=(
-                os.getenv("OPENAI_COGNITIVE_VOICE", "cedar").strip() or "cedar"
-            ),
-            neutral_voice=(
-                os.getenv("OPENAI_NEUTRAL_VOICE", legacy_voice).strip()
-                or legacy_voice
-            ),
-            affective_voice=(
-                os.getenv("OPENAI_AFFECTIVE_VOICE", "coral").strip() or "coral"
+            voice=(
+                os.getenv("OPENAI_REALTIME_VOICE", SHARED_VOICE).strip()
+                or SHARED_VOICE
             ),
             transcription_model=os.getenv(
                 "OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe"
@@ -134,28 +139,23 @@ def assistant_mode_is_valid(assistant_mode: str) -> bool:
     return assistant_mode in ASSISTANT_MODES
 
 
-def assistant_voice(settings: Settings, assistant_mode: str) -> str:
-    """Return the configured voice for an assistant mode."""
-    return {
-        "cognitive": settings.cognitive_voice,
-        "neutral": settings.neutral_voice,
-        "affective": settings.affective_voice,
-    }[assistant_mode]
-
-
-def build_session_config(settings: Settings, assistant_mode: str = "neutral") -> str:
+def build_session_config(
+    settings: Settings,
+    assistant_mode: str = "neutral",
+    scenario: str = "trip",
+) -> str:
     if not assistant_mode_is_valid(assistant_mode):
         raise ValueError("Unsupported assistant mode")
-    mode = ASSISTANT_MODES[assistant_mode]
+    if not scenario_is_valid(scenario):
+        raise ValueError("Unsupported scenario")
     session = {
         "type": "realtime",
         "model": settings.model,
         "output_modalities": ["audio"],
-        "instructions": mode["instructions"],
+        "instructions": build_instructions(assistant_mode, scenario),
         "reasoning": {
             "effort": GLOBAL_REALTIME_SETTINGS["reasoning_effort"],
         },
-        # "temperature": GLOBAL_REALTIME_SETTINGS["temperature"],
         "audio": {
             "input": {
                 "noise_reduction": {
@@ -166,14 +166,21 @@ def build_session_config(settings: Settings, assistant_mode: str = "neutral") ->
                     "language": settings.input_language,
                 },
                 "turn_detection": {
-                    "type": "semantic_vad",
-                    "create_response": True,
-                    "interrupt_response": True,
+                    "type": GLOBAL_REALTIME_SETTINGS["turn_detection_type"],
+                    "eagerness": GLOBAL_REALTIME_SETTINGS[
+                        "turn_detection_eagerness"
+                    ],
+                    "create_response": GLOBAL_REALTIME_SETTINGS[
+                        "turn_detection_create_response"
+                    ],
+                    "interrupt_response": GLOBAL_REALTIME_SETTINGS[
+                        "turn_detection_interrupt_response"
+                    ],
                 },
             },
             "output": {
-                "voice": assistant_voice(settings, assistant_mode),
-                "speed": mode["speed"],
+                "voice": settings.voice,
+                "speed": SHARED_SPEED,
             },
         },
     }
@@ -219,6 +226,7 @@ def next_recording_path(
     extension: str,
     recorded_at: Optional[datetime] = None,
     paired_text_directory: Optional[Path] = None,
+    paired_event_directory: Optional[Path] = None,
 ) -> Path:
     """Choose a non-destructive YYMMDD_ParticipantID recording path."""
     date_prefix = (recorded_at or datetime.now()).strftime("%y%m%d")
@@ -234,7 +242,11 @@ def next_recording_path(
             paired_text_directory
             and (paired_text_directory / "{}.txt".format(stem)).exists()
         )
-        return not audio_exists and not text_exists
+        event_exists = bool(
+            paired_event_directory
+            and (paired_event_directory / "{}.json".format(stem)).exists()
+        )
+        return not audio_exists and not text_exists and not event_exists
 
     candidate_stem = base_name
     while not stem_is_available(candidate_stem):
@@ -251,6 +263,7 @@ def store_recording(
     extension: str,
     recorded_at: Optional[datetime] = None,
     paired_text_directory: Optional[Path] = None,
+    paired_event_directory: Optional[Path] = None,
 ) -> Path:
     """Stream a recording to a temporary file, then move it into place."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -263,6 +276,7 @@ def store_recording(
                 extension,
                 recorded_at,
                 paired_text_directory,
+                paired_event_directory,
             )
             temporary_path = directory / ".{}.{}.tmp".format(
                 final_path.name, secrets.token_hex(8)
@@ -330,8 +344,69 @@ def store_text_log(
                 pass
 
 
+def store_event_log(
+    source: BinaryIO,
+    content_length: int,
+    directory: Path,
+    recording_stem: str,
+) -> Path:
+    """Store a validated JSON event log without overwriting other content."""
+    directory.mkdir(parents=True, exist_ok=True)
+    temporary_path: Optional[Path] = None
+    try:
+        with EVENT_LOG_WRITE_LOCK:
+            final_path = directory / "{}.json".format(recording_stem)
+            temporary_path = directory / ".{}.{}.tmp".format(
+                final_path.name, secrets.token_hex(8)
+            )
+            remaining = content_length
+            with temporary_path.open("xb") as event_file:
+                while remaining:
+                    chunk = source.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise OSError("The client disconnected during upload")
+                    event_file.write(chunk)
+                    remaining -= len(chunk)
+
+            event_bytes = temporary_path.read_bytes()
+            event_text = event_bytes.decode("utf-8", errors="strict")
+            event_payload = json.loads(event_text)
+            if not isinstance(event_payload, dict):
+                raise ValueError("The event log must be a JSON object")
+            if event_payload.get("schema_version") != "1.0":
+                raise ValueError("Unsupported event log schema")
+            participant_id = str(event_payload.get("participant_id", ""))
+            if not participant_id_is_valid(participant_id):
+                raise ValueError("The event log participant ID is invalid")
+            stem_participant = recording_stem[7:]
+            participant_stem_pattern = re.compile(
+                r"^{}(?:_[0-9]{{2,}})?$".format(re.escape(participant_id))
+            )
+            if not participant_stem_pattern.fullmatch(stem_participant):
+                raise ValueError(
+                    "The event log participant ID does not match the recording"
+                )
+
+            if final_path.exists():
+                if final_path.read_bytes() == event_bytes:
+                    temporary_path.unlink()
+                    temporary_path = None
+                    return final_path
+                raise FileExistsError("A different event log already exists")
+
+            temporary_path.replace(final_path)
+            temporary_path = None
+            return final_path
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
 class VoiceDemoHandler(SimpleHTTPRequestHandler):
-    server_version = "LocalVoiceDemo/0.1"
+    server_version = "NomiVoicePilot/0.3"
     settings: Settings
 
     def __init__(self, *args, **kwargs):
@@ -357,9 +432,17 @@ class VoiceDemoHandler(SimpleHTTPRequestHandler):
                     "ok": True,
                     "api_key_configured": self.settings.api_key_is_configured,
                     "model": self.settings.model,
+                    "prompt_version": PROMPT_VERSION,
+                    "controller_version": CONTROLLER_VERSION,
                     "https": bool(self.settings.tls_cert_file),
                 },
             )
+            return
+        if self.path == "/study-config":
+            config = public_study_config()
+            config["model"] = self.settings.model
+            config["assistant"]["voice"] = self.settings.voice
+            self._send_json(HTTPStatus.OK, config)
             return
         super().do_GET()
 
@@ -372,6 +455,9 @@ class VoiceDemoHandler(SimpleHTTPRequestHandler):
             return
         if self.path == "/transcripts":
             self._save_transcript()
+            return
+        if self.path == "/event-logs":
+            self._save_event_log()
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
@@ -393,6 +479,13 @@ class VoiceDemoHandler(SimpleHTTPRequestHandler):
             self._send_json(
                 HTTPStatus.BAD_REQUEST,
                 {"error": "Assistant mode must be Cognitive, Neutral, or Affective."},
+            )
+            return
+        scenario = self.headers.get("X-Conversation-Scenario", "trip").strip().lower()
+        if not scenario_is_valid(scenario):
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "Scenario must be Trip or End-of-Day."},
             )
             return
 
@@ -432,7 +525,11 @@ class VoiceDemoHandler(SimpleHTTPRequestHandler):
         body = encode_multipart(
             {
                 "sdp": offer_sdp,
-                "session": build_session_config(self.settings, assistant_mode),
+                "session": build_session_config(
+                    self.settings,
+                    assistant_mode,
+                    scenario,
+                ),
             },
             boundary,
         )
@@ -528,6 +625,7 @@ class VoiceDemoHandler(SimpleHTTPRequestHandler):
                 participant_id,
                 extension,
                 paired_text_directory=TRANSCRIPTS_DIR,
+                paired_event_directory=EVENT_LOGS_DIR,
             )
         except OSError as exc:
             self.log_error("Recording save error: %s", exc)
@@ -602,6 +700,80 @@ class VoiceDemoHandler(SimpleHTTPRequestHandler):
             self._send_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
                 {"error": "The text log could not be saved. Check the server log."},
+            )
+            return
+
+        self._send_json(
+            HTTPStatus.CREATED,
+            {
+                "ok": True,
+                "filename": final_path.name,
+                "bytes": content_length,
+            },
+        )
+
+    def _save_event_log(self) -> None:
+        recording_stem = self.headers.get("X-Recording-Stem", "").strip()
+        if not recording_stem_is_valid(recording_stem):
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "The recording filename stem is invalid."},
+            )
+            return
+
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip()
+        if content_type != "application/json":
+            self._send_json(
+                HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                {"error": "Content-Type must be application/json."},
+            )
+            return
+
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            content_length = 0
+        if content_length <= 0:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "The event log is empty."})
+            return
+        if content_length > MAX_EVENT_LOG_BYTES:
+            self._send_json(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                {"error": "The event log exceeds the 5 MB limit."},
+            )
+            return
+
+        try:
+            final_path = store_event_log(
+                self.rfile,
+                content_length,
+                EVENT_LOGS_DIR,
+                recording_stem,
+            )
+        except UnicodeDecodeError:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "The event log must be valid UTF-8."},
+            )
+            return
+        except (json.JSONDecodeError, ValueError) as exc:
+            self.log_error("Event log validation error: %s", exc)
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "The event log must be valid study JSON."},
+            )
+            return
+        except FileExistsError:
+            self._send_json(
+                HTTPStatus.CONFLICT,
+                {"error": "A different event log already exists for this recording."},
+            )
+            return
+        except OSError as exc:
+            self.log_error("Event log save error: %s", exc)
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"error": "The event log could not be saved. Check the server log."},
             )
             return
 
