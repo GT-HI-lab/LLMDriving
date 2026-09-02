@@ -609,9 +609,7 @@ SCENARIOS: Dict[str, Dict[str, object]] = {
                     "in your own words."
                 ),
                 "emphasis": (
-                    "Think of one practical task, decision, or plan from today "
-                    "or the coming week that you would genuinely like help "
-                    "thinking through"
+                    "one practical task, decision, or plan "
                 ),
                 "starter": "",
             },
@@ -638,9 +636,7 @@ SCENARIOS: Dict[str, Dict[str, object]] = {
                     "introduce the topic naturally in your own words."
                 ),
                 "emphasis": (
-                    "Think of a recent experience or concern that has stayed "
-                    "on your mind—perhaps something that left you uncertain, "
-                    "tense, disappointed, or with mixed feelings"
+                    "recent experience or concern "
                 ),
                 "starter": "",
             },
