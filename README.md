@@ -1,4 +1,4 @@
-# Buzz Realtime Voice Study
+# Buzz AI Agent Study
 
 This local research application runs two short, task-specific speech-to-speech
 conversations through the OpenAI Realtime API. It supports two between-subject
