@@ -440,6 +440,14 @@ summary {
   padding-left: 3px;
 }
 
+.participant-copy .instruction-list.island-items {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(12, auto);
+  grid-auto-flow: column;
+  column-gap: 32px;
+}
+
 .participant-copy .instruction-timing {
   margin-bottom: 7px;
   color: var(--gt-navy);

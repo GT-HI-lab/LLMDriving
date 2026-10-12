@@ -98,6 +98,7 @@ let transitionPlaybackPending = false;
 let preparationTimerId = null;
 let preparationStartedAt = null;
 let preparationReadyAt = null;
+let taskTransitionTiming = null;
 let savedTaskSummaries = [];
 let openingRequested = false;
 let openingInProgress = false;
@@ -122,6 +123,7 @@ let endingStage = "exploring";
 let endingAnswerAfterBatch = 0;
 let pendingEndingPlayback = new Map();
 let completedAudioResponses = new Set();
+let audioPlaybackEndedAt = new Map();
 let cancelledAudioResponses = new Set();
 let responseControls = new Map();
 let issuedResponseControl = null;
@@ -130,7 +132,15 @@ let closingAuthorized = false;
 let closingResponseId = null;
 let closingReason = null;
 let closingPreviousStage = "exploring";
+let closingAcknowledgment = "";
+let closingAcknowledgmentDelivered = false;
+let acknowledgmentRetryCount = 0;
+let affectiveFollowupCount = 0;
+let pendingAffectiveFollowupResponseId = null;
+let countedFollowupResponses = new Set();
+let countedFollowupQuestions = new Set();
 let leavesCandidateOffered = false;
+let leavesWrapupChoiceDelivered = false;
 let listeningRepair = null;
 let repairSpeech = new Map();
 let deliveredAssistantText = "";
@@ -153,7 +163,7 @@ const STUDY_PROGRESS_TOOL = {
       action: { type: "string", enum: ["check_answered", "finish", "stop", "repair_needed"] },
       reason: { type: "string", enum: ["completed", "participant_stop", "discomfort"] },
       evidence: { type: "string", description: "Brief evidence in the latest participant reply that this step is complete or they want to stop; a yes to sharing more is NOT completion." },
-      acknowledgment: { type: "string", description: "Optional short plain acknowledgment, at most 25 words, grounded in their words. No question, interpretation, farewell, or thanks. Empty is allowed." },
+      acknowledgment: { type: "string", description: "Required for finish/stop: a non-empty response of at most 40 words. Respond specifically to additional substantive sharing after the final invitation; generic thanks alone is insufficient for that content. If nothing more to add, a brief Okay is sufficient in either condition. In Affective, do not summarize the memory or add a retrospective reflection after no/nothing else. The fixed Affective closing already thanks them for sharing. For stop, briefly respect the boundary. No question or closing phrase. Empty allowed only for check_answered/repair_needed." },
     },
     required: ["action", "reason", "evidence", "acknowledgment"],
     additionalProperties: false,
@@ -204,6 +214,7 @@ function currentTaskPosition() {
 
 function currentExactClosing() {
   if (!studyConfig || !studyConfig.closings) return "";
+  if (activeAssistantMode === "affective") return studyConfig.affective_closing;
   return currentTaskPosition() === 1
     ? studyConfig.closings.task_one
     : studyConfig.closings.task_two;
@@ -284,7 +295,7 @@ function renderActiveTaskPreparation() {
   participantInstructionHeading.textContent = instruction.title;
   renderInstructionBody(participantInstructionBody, instruction);
   conversationInstructionHeading.textContent = instruction.title;
-  renderInstructionBody(conversationInstructionBody, instruction);
+  renderInstructionBody(conversationInstructionBody, instruction, true);
   backButton.hidden = currentTaskPosition() !== 1;
   conversationInstruction.hidden = false;
   showView(participantInstructionView);
@@ -326,13 +337,7 @@ function setSetupControlsDisabled(disabled) {
 }
 
 function hideConversationInstruction(trigger, itemId) {
-  if (!participantInstructionPending) return;
   participantInstructionPending = false;
-  conversationInstruction.hidden = true;
-  recordEvent("participant_instruction_hidden", {
-    trigger,
-    item_id: itemId,
-  });
 }
 
 function setMicrophoneEnabled(enabled) {
@@ -620,6 +625,8 @@ function cancelPrePlaybackResponseForContinuation(participantItemId) {
     closingAuthorized = false;
     closingResponseId = null;
     closingReason = null;
+    closingAcknowledgment = "";
+    closingAcknowledgmentDelivered = false;
     finalClosingDelivered = false;
     finalClosingPlaybackPending = false;
     endingStage = closingPreviousStage;
@@ -693,6 +700,7 @@ function resetEndingController() {
   endingAnswerAfterBatch = 0;
   pendingEndingPlayback.clear();
   completedAudioResponses.clear();
+  audioPlaybackEndedAt.clear();
   cancelledAudioResponses.clear();
   responseControls.clear();
   issuedResponseControl = null;
@@ -701,7 +709,15 @@ function resetEndingController() {
   closingResponseId = null;
   closingReason = null;
   closingPreviousStage = "exploring";
+  closingAcknowledgment = "";
+  closingAcknowledgmentDelivered = false;
+  acknowledgmentRetryCount = 0;
+  affectiveFollowupCount = 0;
+  pendingAffectiveFollowupResponseId = null;
+  countedFollowupResponses.clear();
+  countedFollowupQuestions.clear();
   leavesCandidateOffered = false;
+  leavesWrapupChoiceDelivered = false;
   listeningRepair = null;
   deliveredAssistantText = "";
   responseSpeech.clear();
@@ -752,7 +768,8 @@ function sendPacingControlIfNeeded() {
   const pacing = effectivePacingConfig();
   if (!dataChannel || dataChannel.readyState !== "open" || topicStartedAtMilliseconds === null) return;
   const elapsedSeconds = pacingElapsedSeconds();
-  if (elapsedSeconds >= pacing.finalization_elapsed_seconds && endingStage === "exploring") {
+  if (elapsedSeconds >= pacing.finalization_elapsed_seconds && endingStage === "exploring" &&
+      affectiveFollowupsReady()) {
     endingStage = "need_check";
   }
   let state;
@@ -788,6 +805,54 @@ function sendPacingControlIfNeeded() {
   // before a response, never by forcing a response during speech/transcription.
 }
 
+function affectiveFollowupsReady() {
+  const minimum = studyConfig && studyConfig.affective_followups
+    ? studyConfig.affective_followups.minimum : 2;
+  return activeAssistantMode !== "affective" ||
+    (affectiveFollowupCount >= minimum && pendingAffectiveFollowupResponseId === null);
+}
+
+// Playback is essential: generated/cancelled speech never counts. These rules
+// conservatively recognize questions; prompt fidelity still needs live review.
+function commitAffectiveFollowupPlayback(responseId) {
+  const control = responseControls.get(responseId);
+  if (activeAssistantMode !== "affective" || !control || control.kind !== "participant_reply" ||
+      control.repairBatch !== null || control.stage !== "exploring" ||
+      countedFollowupResponses.has(responseId) || cancelledAudioResponses.has(responseId) ||
+      !completedAudioResponses.has(responseId) || !responseSpeech.has(responseId)) return;
+  const text = responseSpeech.get(responseId);
+  const normalized = normalizeSpeech(text);
+  const scripted = [studyConfig.affective_final_check, studyConfig.cognitive_completeness_check,
+    currentExactClosing()].filter(Boolean).some(s => normalized.includes(normalizeSpeech(s)));
+  if (scripted || (!/[?]/.test(text) && !/\btell me more about\b/.test(normalized)) ||
+      /\b(?:repeat|say that again|what do you mean|did you say|is that what you|did i understand|want to stop|want to skip|need a break|anything else)\b/.test(normalized)) return;
+  const questions = (text.match(/[^.!?]*\?/g) || [text]).map(normalizeSpeech).join(" ");
+  if (countedFollowupQuestions.has(questions)) return;
+  countedFollowupResponses.add(responseId);
+  countedFollowupQuestions.add(questions);
+  affectiveFollowupCount += 1;
+  pendingAffectiveFollowupResponseId = responseId;
+  recordEvent("affective_followup_playback_completed", {
+    response_id: responseId, followup_count: affectiveFollowupCount,
+    recognition: "delivered_question_excluding_scripted_and_repair_turns",
+  });
+}
+
+function validClosingAcknowledgment(text) {
+  return typeof text === "string" && text.trim().length > 0 && countWords(text) <= 40 &&
+    !/[?]/.test(text) &&
+    !normalizeSpeech(text).includes(normalizeSpeech(currentExactClosing()));
+}
+
+function commitClosingAcknowledgmentPlayback(responseId) {
+  if (closingAuthorized && responseId === closingResponseId && closingAcknowledgment &&
+      completedAudioResponses.has(responseId) && !cancelledAudioResponses.has(responseId) &&
+      responseSpeech.has(responseId) &&
+      normalizeSpeech(responseSpeech.get(responseId)).startsWith(normalizeSpeech(closingAcknowledgment))) {
+    closingAcknowledgmentDelivered = true;
+  }
+}
+
 // Detection starts a conservative listening hold; it never decides that an
 // answer was delivered or resolved. Playback + a later participant turn do that.
 function requiresListeningRepair(text) {
@@ -815,7 +880,17 @@ function acceptedHelpOffer(text) {
 
 function commitDeliveredSpeech(responseId) {
   if (completedAudioResponses.has(responseId) && !cancelledAudioResponses.has(responseId) &&
-      responseSpeech.has(responseId)) deliveredAssistantText = responseSpeech.get(responseId);
+      responseSpeech.has(responseId)) {
+    deliveredAssistantText = responseSpeech.get(responseId);
+    const choice = studyConfig && studyConfig.leaves_wrapup_choice_question;
+    if (activeTaskId === "leaves" && !leavesWrapupChoiceDelivered && choice &&
+        normalizeSpeech(deliveredAssistantText).includes(normalizeSpeech(choice))) {
+      leavesWrapupChoiceDelivered = true;
+      recordEvent("leaves_wrapup_choice_playback_completed", { response_id: responseId });
+    }
+    commitAffectiveFollowupPlayback(responseId);
+    commitClosingAcknowledgmentPlayback(responseId);
+  }
 }
 
 function updateListeningRepair(requests) {
@@ -848,10 +923,46 @@ function commitRepairPlayback(responseId) {
   repairSpeech.delete(responseId);
 }
 
+function leavesWrapupControlText() {
+  const common = "Once conceptual questions are resolved, return to building the explanation for the seven-year-old. " +
+    "I understand the concept does not mean they chose a child-ready explanation. If they already gave or " +
+    "endorsed a sufficient child explanation, or decline this step, no further exercise is needed. " +
+    "If they already requested an example, fulfil that request without asking them to choose again. ";
+  return common + (leavesWrapupChoiceDelivered
+    ? "The example-or-explain choice has already finished playing. Do not routinely repeat it; a requested repeat is allowed. Do not append a rehearsal invitation. "
+    : "Otherwise offer these two paths once at wrap-up before giving an unsolicited final example, then wait: " +
+      JSON.stringify(studyConfig.leaves_wrapup_choice_question) + " ") +
+    "Follow their choice: give a concise example using established ideas, or wait for their own explanation " +
+    "and help refine its order, child-understandable words, and causal links. A bare yes is ambiguous between " +
+    "the two paths: clarify which they prefer. If they decline both, move on without providing an unwanted " +
+    "example. Do not add science by default, force a full rehearsal, or assume approval.";
+}
+
 function endingControlText() {
   const elapsed = pacingElapsedSeconds();
   const check = activeAssistantMode === "affective"
     ? studyConfig.affective_final_check : studyConfig.cognitive_completeness_check;
+  const beforeCheck = activeAssistantMode === "affective"
+    ? "Give their last meaningful answer a natural, specific empathetic response before the invitation. " +
+      "For a rich or difficult answer, usually use two brief connected sentences recognizing concrete " +
+      "circumstances and their stated experience, not an emotion-word echo. A reflection-only turn is " +
+      "allowed: wait for them, then invite sharing when appropriate. Do not repeat an already adequate " +
+      "reflection, invent relief/recovery from an action, or add another exploratory question to fill time. " +
+      "Respond to their latest sharing; do not summarize the whole memory as an ending step. "
+    : activeTaskId === "leaves"
+      ? "Before the check, make sure the explanation connects autumn's shorter daylight/cooler conditions, " +
+        "changing leaf food-making activity, reduced replacement/breakdown of the green material, and " +
+        "visible yellow/orange colors. If a link is missing, help connect it aloud first. A short okay " +
+        "or green fades alone does not make an incomplete explanation sufficient. Keep the first support " +
+        "response a starting clue, not a complete child-ready answer, even after a long opening. " +
+        leavesWrapupControlText() + " "
+      : "Acknowledge the latest meaningful reply before the final check, including uncertainty. ";
+  const closingResponse = activeAssistantMode === "affective"
+    ? "For finish, respond specifically to any additional content shared after the invitation. If they have " +
+      "nothing more to add, use a brief Okay before the fixed closing, which thanks them for sharing. Do not " +
+      "summarize the memory or add a required retrospective reflection after a decline. Do not repeat a " +
+      "previous reflection or duplicate the fixed closing's thanks in the acknowledgment. For stop, respect the boundary briefly. "
+    : "Respond to substantive content specifically; if nothing more, Okay is enough. ";
   const common = "[STUDY ENDING CONTROL] Stage: " + endingStage +
     ". Never say the exact closing or a substitute farewell. Use study_progress silently instead; " +
     "do not speak in the same response as a tool call. Stop/discomfort requests override all stages. " +
@@ -859,7 +970,10 @@ function endingControlText() {
     "or says you did not listen, answer the specific question aloud first and stay at this stage. " +
     "Never claim a repair has happened in a silent tool call. Use repair_needed if a listening hold is needed. " +
     "A yes to your help offer requires you to deliver that help aloud, not finish. " +
-    "Acknowledge the latest meaningful reply before the final check, including uncertainty. " +
+    beforeCheck +
+    "Every finish/stop call MUST include a short acknowledgment of the latest participant reply, " +
+    "at most 40 words. " + closingResponse +
+    "It will play with the closing, without another required participant turn. Never leave it empty. " +
     "Do not suggest pausing as a routine ending. Never mention the browser, tool, or waiting for the next step. ";
   if (listeningRepair && listeningRepair.source === "unclear_short_answer") return common +
     "The short reply to your question was unclear. Ask them briefly to repeat their answer. " +
@@ -872,21 +986,31 @@ function endingControlText() {
     "If they only need time, acknowledge and wait. If they request a repeat, repeat the requested content. " +
     "The four/five-minute clock cannot override this hold.";
   if (endingStage === "need_check") return common +
-    "Only if the latest question/concern has been addressed, ask this question, then wait. Otherwise answer it aloud and stay here: " + JSON.stringify(check);
+    "Only when the latest question/concern and the response requirements above are addressed, ask this question, then wait. " +
+    "If explanatory support or an empathetic response is still needed, deliver it first. A response-only turn " +
+    "may precede the question; wait for the participant and stay here rather than rushing the invitation: " + JSON.stringify(check);
   if (endingStage === "waiting_check") return common + (activeAssistantMode === "affective"
-    ? "The sharing invitation has finished playing. If they have nothing to add, or have now finished sharing, call finish with a short grounded acknowledgment. A bare yes means they want to share: invite them to continue and wait. If they ask for a repeat or time, help and wait; do not finish. Do not ask new exploratory questions."
+    ? "The sharing invitation has finished playing. Wait for their answer. If they have nothing to add, call finish with a brief Okay; no summary or retrospective reflection is required. If they add content, respond to that content specifically before closing, using the acknowledgment field when appropriate. Do not assume completion from a pause or the clock. The fixed closing thanks them for sharing. A bare yes means they want to share: invite them to continue and wait. If they ask for a repeat or time, help and wait; do not finish. Do not ask new exploratory questions."
     : activeTaskId === "leaves"
-      ? "The final completeness check has finished playing. If nothing remains to address, call finish. Fulfil any accepted offer or answer a new question first. Do not automatically request rehearsal or another check."
+      ? "The final completeness check has finished playing. If nothing remains to address, call finish. Fulfil any accepted offer or answer a new question first. If they only report understanding the concept and the child-explanation application above has not happened, follow the example-or-explain choice guidance above and wait; do not claim they are satisfied with an explanation. Do not automatically request a full rehearsal or another check."
       : "The completeness check has finished playing. If there is a question or revision, call repair_needed or answer aloud and wait for a subsequent participant reply. Only when the latest reply actually resolves the check, call check_answered. Do not skip to farewell or request a full rehearsal yet. A repeat/time request does not complete this step.");
   if (endingStage === "need_final") return common + (activeTaskId === "leaves"
-    ? "Only with no unresolved question or listening complaint, ask: " + JSON.stringify(studyConfig.leaves_rehearsal_question) + " Then wait."
+    ? "Only with no unresolved question or listening complaint, follow the example-or-explain guidance above and wait; do not force a full rehearsal."
     : "Read exactly the participant's three current canonical item names: To confirm, your final three items are [A], [B], and [C]. Is that right? Then wait. Do not guess missing or uncertain choices; clarify first.");
   if (endingStage === "waiting_final") return common + (activeTaskId === "leaves"
-    ? "After their final rehearsal, call finish with a brief acknowledgment; include one short factual correction if needed. If they decline, offer a concise accurate candidate followed exactly by: Would you like to keep that explanation or change it? Wait for approval before finish. Do not require a second full rehearsal. A bare yes to the rehearsal invitation means wait for their explanation, not finish."
+    ? "Follow their selected example-or-explain path. If they explain, respond briefly and include a short factual correction if needed. If they decline, respect that without providing a replacement example or requiring approval. A bare yes to the two-path question requires clarification; do not assume a path or finish."
     : "Only call finish after clear confirmation of the last three items read aloud. If they change an item, restate and reconfirm exactly three. If they ask a question, answer without assuming confirmation. Do not guarantee survival.");
+  if (!affectiveFollowupsReady()) return common +
+    "AFFECTIVE FOLLOW-UP: " + affectiveFollowupCount + " follow-ups have finished playing. " +
+    "For each memory ask at least two substantive follow-ups, usually aim for three, grounded in their story. " +
+    "Do not ask the final sharing invitation yet. Respond to their latest answer and continue one useful " +
+    "follow-up at a time; never repeat a resolved question to fill a count. The clock is only a target, " +
+    "with no fixed overrun cap. Clear refusal/discomfort overrides this minimum at any time. " +
+    "A short reply or I don't know alone is not refusal.";
   if (elapsed >= effectivePacingConfig().minimum_synthesis_elapsed_seconds) return common +
-    "ENDING WINDOW (3–5 minutes): If the topic is sufficiently explored and no request remains, " +
-    "briefly acknowledge the latest answer, ask this final question once, then wait: " + JSON.stringify(check) +
+    "ENDING WINDOW (target 4–5 minutes): If the topic is sufficiently explored and no request remains, " +
+    "respond to the latest answer as described above, then ask this final question once and wait, " +
+    "or first use a response-only turn and wait if that better receives what they shared: " + JSON.stringify(check) +
     " Otherwise continue a useful exchange. A long opening story should still receive meaningful engagement. " +
     "Do not fill time, reopen resolved choices, suggest a routine, or offer to stay quiet. " +
     "For Leaves, any useful example or invited rehearsal belongs before this check.";
@@ -909,14 +1033,15 @@ function makeResponseControl(requests, kind) {
     itemIds: requests.map((r) => r.itemId), kind, repairBatch: listeningRepair ? listeningRepair.batch : null };
 }
 
-function requestControlledResponse(kind, text) {
+function requestControlledResponse(kind, text, sourceControl) {
   if (isStopping || !dataChannel || dataChannel.readyState !== "open") return;
   if (participantResponseBlockers().length || queuedParticipantResponses.length) {
-    pendingControlledResponse = { kind, text };
+    pendingControlledResponse = { kind, text, sourceControl };
     return;
   }
   pendingControlledResponse = null;
-  issuedResponseControl = makeResponseControl([], kind);
+  issuedResponseControl = sourceControl
+    ? { ...sourceControl, kind } : makeResponseControl([], kind);
   responseInProgress = true;
   activeResponseKind = "conversation";
   activeParticipantResponseRequests = [];
@@ -926,7 +1051,16 @@ function requestControlledResponse(kind, text) {
     // Empty input deliberately removes previous conversation/control messages.
     // Keep output in the conversation for existing logging/playback handlers.
     response.input = [];
-    response.instructions = "Say exactly this and nothing else: " + JSON.stringify(text);
+    response.instructions = programmedSpeechInstructions(text);
+  } else if (kind === "closing_acknowledgment") {
+    response.tools = [currentStudyProgressTool()];
+    response.tool_choice = "auto";
+    sendHiddenControl(endingControlText() +
+      " Your previous transition had an empty or invalid acknowledgment. Without speaking or asking " +
+      "another question, call study_progress again with the same finish/stop intent, a valid reason, " +
+      "and an acknowledgment following the mode-specific guidance above. In Affective finish, respond to " +
+      "additional content if any; after no/nothing else, use a brief Okay without recapping the memory. Keep it under 40 words, " +
+      "without a question or the exact closing phrase. Do not infer a new participant answer.");
   } else {
     sendHiddenControl(endingControlText());
   }
@@ -938,7 +1072,7 @@ function requestControlledResponse(kind, text) {
 function drainControlledResponse() {
   if (!pendingControlledResponse || participantResponseBlockers().length || queuedParticipantResponses.length) return;
   const next = pendingControlledResponse;
-  requestControlledResponse(next.kind, next.text);
+  requestControlledResponse(next.kind, next.text, next.sourceControl);
 }
 
 function commitEndingPlayback(responseId) {
@@ -973,6 +1107,7 @@ function handleStudyProgress(call, control) {
     typeof args.acknowledgment === "string";
   const interrupted = speechInProgress || pendingTranscriptionItemIds.size || queuedParticipantResponses.length;
   let accepted = false;
+  let acknowledgmentRequired = false;
   if (valid && args.action === "repair_needed" && control && control.itemIds.length && !interrupted) {
     beginListeningRepair(control.itemIds, control.batch, "model_requested");
     dataChannel.send(JSON.stringify({ type: "conversation.item.create", item: {
@@ -1003,16 +1138,36 @@ function handleStudyProgress(call, control) {
       }
     }
   }
+  if (accepted && ["finish", "stop"].includes(args.action) &&
+      !validClosingAcknowledgment(args.acknowledgment)) {
+    accepted = false;
+    acknowledgmentRequired = true;
+  }
   dataChannel.send(JSON.stringify({ type: "conversation.item.create", item: {
     type: "function_call_output", call_id: call.call_id,
     output: JSON.stringify({ accepted, stage: endingStage,
-      instruction: accepted ? "Wait for the browser-controlled response." : "Do not close. Follow the current stage and latest participant speech." }),
+      instruction: accepted ? "Wait for the browser-controlled response." : acknowledgmentRequired
+        ? "Do not close yet. Regenerate a short content acknowledgment; the participant need not answer again."
+        : "Do not close. Follow the current stage and latest participant speech." }),
   } }));
   recordEvent("study_progress_decision", { action: args.action, accepted,
     reason: args.reason, evidence: args.evidence, ending_stage: endingStage,
-    blocked_by_listening_repair: Boolean(listeningRepair) });
+    blocked_by_listening_repair: Boolean(listeningRepair),
+    acknowledgment_required: acknowledgmentRequired });
   if (!accepted) {
-    if (!interrupted) pendingControlledResponse = { kind: "ending_repair" };
+    if (acknowledgmentRequired && !interrupted) {
+      acknowledgmentRetryCount += 1;
+      if (acknowledgmentRetryCount <= 2) {
+        pendingControlledResponse = { kind: "closing_acknowledgment", sourceControl: control };
+      } else {
+        recordEvent("failure", { stage: "closing_acknowledgment_generation" });
+        closingReason = "closing_acknowledgment_failed";
+        conversationEndedAtMilliseconds = Date.now();
+        clearPacingTimer();
+        void stopSession({ manualStop: false, advanceToNextTask: false,
+          participantFinalStatus: "Please return the device to the researcher." });
+      }
+    } else if (!interrupted) pendingControlledResponse = { kind: "ending_repair" };
     return;
   }
   if (args.action === "check_answered") {
@@ -1020,14 +1175,17 @@ function handleStudyProgress(call, control) {
     return;
   }
   closingPreviousStage = endingStage;
+  acknowledgmentRetryCount = 0;
   closingAuthorized = true;
   endingStage = "closing";
-  const acknowledgment = args.acknowledgment.trim();
-  const safeAcknowledgment = countWords(acknowledgment) <= 25 &&
-    !/[?]/.test(acknowledgment) && !/thank|completes|goodbye/i.test(acknowledgment)
-    ? acknowledgment : "";
+  closingAcknowledgment = args.acknowledgment.trim();
+  closingAcknowledgmentDelivered = false;
+  if (activeAssistantMode === "affective" && !affectiveFollowupsReady() && args.reason === "completed") {
+    recordEvent("affective_followup_shortfall", { followup_count: affectiveFollowupCount,
+      reason: "already_delivered_final_invitation_honored_without_repeating" });
+  }
   pendingControlledResponse = { kind: "closing", text:
-    (safeAcknowledgment ? safeAcknowledgment + " " : "") + currentExactClosing() };
+    closingAcknowledgment + " " + currentExactClosing() };
 }
 
 // Retry only after generation and playback settle, regardless of event order.
@@ -1040,7 +1198,9 @@ function recoverMissingClosing(responseId) {
   if (closingRetryCount < 1) {
     closingRetryCount += 1;
     recordEvent("closing_exact_phrase_retry", { response_id: responseId });
-    pendingControlledResponse = { kind: "closing", text: currentExactClosing() };
+    recordEvent("closing_delivery_retry", { acknowledgment_delivered: closingAcknowledgmentDelivered });
+    pendingControlledResponse = { kind: "closing", text:
+      (closingAcknowledgmentDelivered ? "" : closingAcknowledgment + " ") + currentExactClosing() };
     drainControlledResponse();
   } else {
     closingReason = "closing_delivery_failed";
@@ -1054,10 +1214,10 @@ function recoverMissingClosing(responseId) {
 }
 
 function completeAuthorizedClosing(responseId) {
-  if (!closingAuthorized || !finalClosingDelivered || responseId !== closingResponseId ||
+  if (!closingAuthorized || !finalClosingDelivered || !closingAcknowledgmentDelivered || responseId !== closingResponseId ||
       !completedAudioResponses.has(responseId) || isStopping) return false;
   finalClosingPlaybackPending = false;
-  conversationEndedAtMilliseconds = Date.now();
+  conversationEndedAtMilliseconds = audioPlaybackEndedAt.get(responseId) ?? Date.now();
   clearPacingTimer();
   setMicrophoneEnabled(false);
   recordEvent("automatic_stop_after_exact_closing", {
@@ -1066,6 +1226,7 @@ function completeAuthorizedClosing(responseId) {
   });
   void stopSession({ manualStop: false,
     advanceToNextTask: currentTaskPosition() === 1 && closingReason === "completed",
+    nextTaskNotBeforeMilliseconds: conversationEndedAtMilliseconds + taskTransitionPauseMilliseconds(),
     participantFinalStatus: currentTaskPosition() === 1 && closingReason === "completed"
       ? "Preparing the next activity…" : "Conversation complete. Please return the device to the researcher.",
   });
@@ -1087,6 +1248,12 @@ function sendParticipantResponseRequest(requests) {
   const latestRequest = requests[requests.length - 1];
   const responseKind = "conversation";
   participantResponseBatchCount += 1;
+  if (pendingAffectiveFollowupResponseId !== null) {
+    recordEvent("affective_followup_reply_received", {
+      response_id: pendingAffectiveFollowupResponseId, participant_item_ids: itemIds,
+    });
+    pendingAffectiveFollowupResponseId = null;
+  }
   sendPacingControlIfNeeded();
   pendingControlledResponse = null;
   updateListeningRepair(requests);
@@ -1479,7 +1646,7 @@ function handleRealtimeEvent(event) {
           }
         }
         const finalQuestion = activeTaskId === "leaves"
-          ? studyConfig.leaves_rehearsal_question : "To confirm, your final three items are";
+          ? studyConfig.leaves_wrapup_choice_question : "To confirm, your final three items are";
         if (!listeningRepair && control && ["need_final", "waiting_final"].includes(control.stage) && finalQuestion &&
             normalizedTranscript.includes(normalizeSpeech(finalQuestion))) {
           pendingEndingPlayback.set(event.response_id, "waiting_final");
@@ -1489,7 +1656,9 @@ function handleRealtimeEvent(event) {
           pendingEndingPlayback.set(event.response_id, "waiting_candidate");
         }
         commitEndingPlayback(event.response_id);
-        if (usedExactClosing && control && control.kind === "closing" && closingAuthorized &&
+        const acknowledgmentAvailable = closingAcknowledgmentDelivered ||
+          (closingAcknowledgment && normalizedTranscript.startsWith(normalizeSpeech(closingAcknowledgment)));
+        if (usedExactClosing && acknowledgmentAvailable && control && control.kind === "closing" && closingAuthorized &&
             normalizedTranscript.endsWith(normalizeSpeech(currentExactClosing()))) {
           finalClosingDelivered = true;
           finalClosingPlaybackPending = true;
@@ -1499,7 +1668,8 @@ function handleRealtimeEvent(event) {
           });
           completeAuthorizedClosing(event.response_id);
         } else if (usedExactClosing) {
-          recordEvent("failure", { stage: "unauthorized_closing", response_id: event.response_id });
+          recordEvent("failure", { stage: closingAuthorized && control && control.kind === "closing"
+            ? "closing_acknowledgment_missing" : "unauthorized_closing", response_id: event.response_id });
         }
       }
       recoverMissingClosing(event.response_id);
@@ -1589,6 +1759,12 @@ function handleRealtimeEvent(event) {
     }
     case "output_audio_buffer.started":
       assistantAudioPlaying = true;
+      if (transitionPlaybackPending && taskTransitionTiming) {
+        const startedAt = Date.now();
+        taskTransitionTiming.audio_started_at = new Date(startedAt).toISOString();
+        taskTransitionTiming.actual_gap_seconds =
+          (startedAt - taskTransitionTiming.previous_closing_ended_at_ms) / 1000;
+      }
       if (openingPlaybackPending && !transitionPlaybackPending) startConversationClock();
       lastConversationActivityAt = Date.now();
       if (
@@ -1602,6 +1778,8 @@ function handleRealtimeEvent(event) {
             closingAuthorized = false;
             closingResponseId = null;
             closingReason = null;
+            closingAcknowledgment = "";
+            closingAcknowledgmentDelivered = false;
             finalClosingDelivered = false;
             finalClosingPlaybackPending = false;
             endingStage = closingPreviousStage;
@@ -1638,6 +1816,9 @@ function handleRealtimeEvent(event) {
       }
       if (event.type === "output_audio_buffer.stopped") {
         completedAudioResponses.add(event.response_id);
+        if (!audioPlaybackEndedAt.has(event.response_id)) {
+          audioPlaybackEndedAt.set(event.response_id, Date.now());
+        }
         commitDeliveredSpeech(event.response_id);
         commitRepairPlayback(event.response_id);
         commitEndingPlayback(event.response_id);
@@ -1741,6 +1922,41 @@ function handleRealtimeEvent(event) {
   }
 }
 
+function programmedSpeechInstructions(text) {
+  // Per-response instructions replace the session instructions. Include the
+  // same delivery profile here so scripted speech keeps Buzz's common voice.
+  return studyConfig.voice_delivery_instructions +
+    "\n\nSay exactly this and nothing else: " + JSON.stringify(text);
+}
+
+function taskTransitionPauseMilliseconds() {
+  return Math.max(3, Number(studyConfig.task_transition_pause_seconds) || 3) * 1000;
+}
+
+async function requestTransitionWhenReady(notBeforeMilliseconds) {
+  const channel = dataChannel;
+  const deadline = Number.isFinite(notBeforeMilliseconds)
+    ? notBeforeMilliseconds : Date.now() + taskTransitionPauseMilliseconds();
+  const stillReady = () => channel && channel === dataChannel &&
+    channel.readyState === "open" && isPreparationSession && !isStopping;
+  // Saving and reconnecting count toward the gap. Wait only for what remains.
+  while (stillReady() && Date.now() < deadline) {
+    await new Promise(resolve => window.setTimeout(resolve, deadline - Date.now()));
+  }
+  if (!stillReady()) return false;
+  taskTransitionTiming = {
+    minimum_pause_seconds: taskTransitionPauseMilliseconds() / 1000,
+    previous_closing_ended_at_ms: deadline - taskTransitionPauseMilliseconds(),
+    transition_not_before: new Date(deadline).toISOString(),
+    requested_at: new Date().toISOString(),
+    audio_started_at: null,
+    actual_gap_seconds: null,
+  };
+  recordEvent("second_task_transition_pause_completed", { ...taskTransitionTiming });
+  requestTransitionMessage();
+  return true;
+}
+
 function requestProgrammedMessage(text, kind) {
   if (openingRequested || !dataChannel || dataChannel.readyState !== "open") {
     return;
@@ -1770,8 +1986,7 @@ function requestProgrammedMessage(text, kind) {
               : "programmed_task_opening",
           programmed_message_kind: kind,
         },
-        instructions:
-          "Say exactly this and nothing else: " + JSON.stringify(text),
+        instructions: programmedSpeechInstructions(text),
       },
     }),
   );
@@ -2143,6 +2358,7 @@ function buildEventLog(recordingResult, textResult) {
       closing_reason: closingReason,
       closing_authorized: closingAuthorized,
       listening_repair_pending: Boolean(listeningRepair),
+      leaves_wrapup_choice_delivered: leavesWrapupChoiceDelivered,
       overrun_seconds: Math.max(0, pacingElapsedSeconds() - effectivePacingConfig().maximum_elapsed_seconds),
       response_batches: participantResponseBatchCount,
       exploration_hold_sent: pacingHoldSent,
@@ -2162,6 +2378,7 @@ function buildEventLog(recordingResult, textResult) {
       ready_at: preparationReadyAt,
       transition_before_preparation:
         currentTaskPosition() === 2 ? studyConfig.transition : null,
+      transition_timing: cloneForStudyLog(taskTransitionTiming),
     },
     session: {
       started_at: sessionStartedAt,
@@ -2277,7 +2494,7 @@ function appendInstructionSegments(element, segments) {
   }
 }
 
-function renderInstructionBody(element, instruction) {
+function renderInstructionBody(element, instruction, duringConversation = false) {
   element.replaceChildren();
   const blocks = instruction && instruction.blocks;
   if (!Array.isArray(blocks)) {
@@ -2287,9 +2504,15 @@ function renderInstructionBody(element, instruction) {
 
   for (const block of blocks) {
     if (!block || typeof block.type !== "string") continue;
+    if (duringConversation && (block.type === "timing" || block.preparation_only)) {
+      continue;
+    }
     if (block.type === "list") {
       const list = document.createElement("ul");
       list.className = "instruction-list";
+      if (block.layout === "two_columns") {
+        list.classList.add("island-items");
+      }
       for (const item of Array.isArray(block.items) ? block.items : []) {
         const listItem = document.createElement("li");
         listItem.textContent = String(item);
@@ -2471,6 +2694,7 @@ async function startSession(options) {
   }
 
   sessionWasEstablished = false;
+  taskTransitionTiming = null;
   isStopping = false;
   isPreparationSession = preparationOnly;
   transitionPlaybackPending = false;
@@ -2608,12 +2832,12 @@ async function startSession(options) {
     }
 
     dataChannel = peerConnection.createDataChannel("oai-events");
-    dataChannel.addEventListener("open", () => {
+    dataChannel.addEventListener("open", async () => {
       diagnosticLog("Realtime data channel opened.");
       recordEvent("data_channel_opened");
       if (!isStopping) {
         if (preparationOnly) {
-          requestTransitionMessage();
+          await requestTransitionWhenReady(settings.nextTaskNotBeforeMilliseconds);
         } else {
           requestTaskOpening();
         }
@@ -2690,7 +2914,7 @@ async function startSession(options) {
   }
 }
 
-async function prepareNextTask() {
+async function prepareNextTask(nextTaskNotBeforeMilliseconds) {
   selectActiveTask(1);
   preparationStartedAt = null;
   preparationReadyAt = null;
@@ -2699,7 +2923,7 @@ async function prepareNextTask() {
     "Buzz is moving to the next activity.";
   startButton.disabled = true;
   startButton.textContent = "Preparing next activity";
-  await startSession({ preparationOnly: true });
+  await startSession({ preparationOnly: true, nextTaskNotBeforeMilliseconds });
 }
 
 async function stopSession(options) {
@@ -2713,6 +2937,7 @@ async function stopSession(options) {
   const manualStop =
     settings.manualStop === undefined ? false : settings.manualStop;
   const advanceToNextTask = settings.advanceToNextTask === true;
+  const nextTaskNotBeforeMilliseconds = settings.nextTaskNotBeforeMilliseconds;
 
   if (isStopping) return;
   isStopping = true;
@@ -2895,7 +3120,7 @@ async function stopSession(options) {
 
   const completeSave = Boolean(audioResult && textResult && eventResult);
   if (advanceToNextTask && completeSave && activeTaskIndex === 0) {
-    await prepareNextTask();
+    await prepareNextTask(nextTaskNotBeforeMilliseconds);
   } else {
     setSetupControlsDisabled(false);
   }
@@ -2950,14 +3175,22 @@ async function loadStudyConfig() {
           Array.isArray(task.participant_instruction.blocks),
       ) ||
       !Number.isFinite(config.preparation_seconds) ||
+      !Number.isFinite(config.task_transition_pause_seconds) ||
+      config.task_transition_pause_seconds < 3 ||
+      typeof config.voice_delivery_instructions !== "string" ||
+      !config.voice_delivery_instructions.trim() ||
       typeof config.transition !== "string" ||
       !config.transition.trim() ||
       !config.closings ||
       typeof config.closings.task_one !== "string" ||
       typeof config.closings.task_two !== "string" ||
       typeof config.affective_final_check !== "string" ||
+      typeof config.affective_closing !== "string" ||
+      !config.affective_closing.trim() ||
       typeof config.cognitive_completeness_check !== "string" ||
       typeof config.leaves_rehearsal_question !== "string" ||
+      typeof config.leaves_wrapup_choice_question !== "string" ||
+      !config.leaves_wrapup_choice_question.trim() ||
       !config.pacing ||
       !Number.isFinite(config.pacing.minimum_synthesis_elapsed_seconds) ||
       !Number.isFinite(config.pacing.minimum_response_batches) ||

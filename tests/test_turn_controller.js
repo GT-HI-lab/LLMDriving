@@ -103,18 +103,23 @@ const appSource = fs.readFileSync(appPath, "utf8");
 const harness = String.raw`
 (async () => {
   studyConfig = {
-    assistant: { name: "Buzz", voice: "marin", speed: 1 },
-    prompt_version: "pilot-2026-10-04-v13",
-    controller_version: "turn-control-2026-10-04-v14",
+    assistant: { name: "Buzz", voice: "marin", speed: 1.0 },
+    prompt_version: "pilot-2026-10-11-v17",
+    controller_version: "turn-control-2026-10-11-v18",
     preparation_seconds: 60,
+    task_transition_pause_seconds: 3,
+    voice_delivery_instructions: "Speak natural English in a calm, attentive, conversational manner. Speak at a slightly slower, unhurried pace. Keep pitch, pace, energy, and warmth steady across tasks.",
     transition: "Let's move to the next activity.",
     closings: {
       task_one: "That completes our conversation. Thank you!",
       task_two: "That completes our conversation. Thank you!",
     },
     affective_final_check: "Before we finish, is there anything else you'd like to share about that experience?",
+    affective_closing: "That completes our conversation. Thank you for sharing with me.",
+    affective_followups: { minimum: 2, target: 3 },
     cognitive_completeness_check: "Before we finalize it, is there anything important we missed or anything you'd like to reconsider?",
     leaves_rehearsal_question: "Would you like to try saying your final explanation in one or two sentences, as if you were speaking to the child?",
+    leaves_wrapup_choice_question: "Would you like me to give an example based on what we've discussed, or would you like to try explaining it as if I were the child?",
     pacing: {
       minimum_synthesis_elapsed_seconds: 180,
       minimum_response_batches: 0,
@@ -367,10 +372,9 @@ const harness = String.raw`
     .filter((event) => event.type === "response.create")
     .at(-1);
   assert.equal(firstOpening.response.input.length, 0);
-  assert.equal(
-    firstOpening.response.instructions,
+  assert.equal(firstOpening.response.instructions.endsWith(
     'Say exactly this and nothing else: "Hello, I\'m Buzz. How would you explain why leaves change color in autumn to a seven-year-old?"',
-  );
+  ), true);
 
   openingRequested = false;
   openingInProgress = false;
@@ -391,10 +395,9 @@ const harness = String.raw`
   const secondOpening = sentEvents
     .filter((event) => event.type === "response.create")
     .at(-1);
-  assert.equal(
-    secondOpening.response.instructions,
+  assert.equal(secondOpening.response.instructions.endsWith(
     'Say exactly this and nothing else: "Which three items did you choose for the island?"',
-  );
+  ), true);
   assert.equal(secondOpening.response.instructions.includes("Hello"), false);
 
   openingRequested = false;
@@ -405,10 +408,12 @@ const harness = String.raw`
   const transitionCreate = sentEvents
     .filter((event) => event.type === "response.create")
     .at(-1);
-  assert.equal(
-    transitionCreate.response.instructions,
+  assert.equal(transitionCreate.response.instructions.endsWith(
     'Say exactly this and nothing else: "Let\'s move to the next activity."',
-  );
+  ), true);
+  for (const request of [firstOpening, secondOpening, transitionCreate]) {
+    assert.equal(request.response.instructions.startsWith(studyConfig.voice_delivery_instructions + "\n\n"), true);
+  }
   handleRealtimeEvent({
     type: "output_audio_buffer.started",
     response_id: "transition-response",
@@ -439,12 +444,15 @@ const harness = String.raw`
   let automaticStopOptions = null;
   stopSession = async (options) => { automaticStopOptions = options; isStopping = true; };
   let sequence = 0;
-  function freshTask(mode = "affective", task = "positive", elapsed = 275) {
+  function freshTask(mode = "affective", task = "positive", elapsed = 275, followups = 2) {
     resetEndingController();
     clearPreparationTimer();
     clearConversationDisplay();
     topicStartedAtMilliseconds = elapsed === null ? null : Date.now() - elapsed * 1000;
     activeAssistantMode = mode;
+    // Ending-only fixtures stand for a memory with prior exploration. Counting
+    // cases explicitly start at zero and exercise actual playback below.
+    affectiveFollowupCount = mode === "affective" ? followups : 0;
     activeTaskId = task;
     activeTaskIndex = 0;
     activeTaskProfile = { label: task, opening_first: "Hello, I'm Buzz. Tell me about it." };
@@ -479,7 +487,11 @@ const harness = String.raw`
     handleRealtimeEvent({ type: "response.created", response: { id, metadata: { response_kind: "conversation" } } });
     return id;
   }
-  function play(text, id = beginResponse(), transcriptAfterPlayback = false) {
+  function play(text, id = beginResponse(), transcriptAfterPlayback = false, includeAcknowledgment = true) {
+    if (includeAcknowledgment && text === currentExactClosing() && closingAuthorized &&
+        closingAcknowledgment && !closingAcknowledgmentDelivered) {
+      text = closingAcknowledgment + " " + text;
+    }
     const transcript = { type: "response.output_audio_transcript.done", response_id: id,
       item_id: "a-" + id, transcript: text };
     if (!transcriptAfterPlayback) handleRealtimeEvent(transcript);
@@ -489,7 +501,7 @@ const harness = String.raw`
     handleRealtimeEvent({ type: "response.done", response: { id, status: "completed", output: [] } });
     return id;
   }
-  function tool(action, acknowledgment = "", reason = "completed") {
+  function tool(action, acknowledgment = "Okay.", reason = "completed") {
     const id = beginResponse();
     handleRealtimeEvent({ type: "response.done", response: { id, status: "completed", output: [{
       type: "function_call", name: "study_progress", call_id: "call-" + id,
@@ -504,6 +516,90 @@ const harness = String.raw`
     assert.equal(endingStage, "waiting_check");
     assert.equal(microphoneTrack.enabled, true);
   }
+
+  // Even past the target, two delivered follow-ups precede the ordinary final
+  // invitation. The opening, final check, repeats and repairs are not a quota.
+  freshTask("affective", "positive", 360, 0);
+  sendPacingControlIfNeeded();
+  assert.equal(endingStage, "exploring");
+  assert.equal(endingControlText().includes("at least two substantive follow-ups"), true);
+  assert.equal(automaticStopOptions, null);
+  user("My sister came to my graduation.");
+  play("What stood out about having your sister there?");
+  assert.equal(affectiveFollowupCount, 1);
+  sendPacingControlIfNeeded();
+  assert.equal(endingStage, "exploring");
+  user("We celebrated afterwards.");
+  play("Which part of the celebration do you remember most?");
+  assert.equal(affectiveFollowupCount, 2);
+  sendPacingControlIfNeeded();
+  assert.equal(endingStage, "exploring", "the last follow-up still needs an answer");
+  user("We shared a meal together.");
+  sendPacingControlIfNeeded();
+  assert.equal(endingStage, "need_check");
+  askCheck();
+  assert.equal(affectiveFollowupCount, 2);
+
+  // Cancelled/unplayed questions and listening repairs never count.
+  freshTask("affective", "positive", 60, 0);
+  user("My sister came to my graduation.");
+  const cancelledFollowup = beginResponse();
+  handleRealtimeEvent({ type: "response.output_audio_transcript.done", response_id: cancelledFollowup,
+    item_id: "cancelled-followup", transcript: "What stood out about that day?" });
+  assert.equal(affectiveFollowupCount, 0);
+  handleRealtimeEvent({ type: "output_audio_buffer.cleared", response_id: cancelledFollowup });
+  handleRealtimeEvent({ type: "output_audio_buffer.stopped", response_id: cancelledFollowup });
+  handleRealtimeEvent({ type: "response.done", response: { id: cancelledFollowup, status: "completed", output: [] } });
+  assert.equal(affectiveFollowupCount, 0);
+  user("Could you repeat that?");
+  play("What stood out about that day?");
+  assert.equal(affectiveFollowupCount, 0);
+
+  // Explicit boundaries override both elapsed time and missing follow-ups.
+  freshTask("affective", "negative", 20, 0);
+  user("I don't want to talk about this. Please stop.");
+  tool("stop", "Of course. You do not need to continue.", "participant_stop");
+  assert.equal(closingAuthorized, true);
+  play(currentExactClosing());
+  assert.equal(automaticStopOptions.advanceToNextTask, false);
+
+  // Empty/oversized acknowledgments are regenerated from the same reply,
+  // without requiring another participant turn or closing with no response.
+  for (const invalidAck of ["", "word ".repeat(41), "Would you like to say more?"]) {
+    freshTask(); askCheck();
+    user("My friend stayed with me and I felt less alone.");
+    tool("finish", invalidAck);
+    assert.equal(closingAuthorized, false);
+    assert.equal(automaticStopOptions, null);
+    const retry = sentEvents.filter(e => e.type === "response.create").at(-1);
+    assert.equal(retry.response.metadata.controller_kind, "closing_acknowledgment");
+    assert.equal(retry.response.tools[0].name, "study_progress");
+    const batch = participantResponseBatchCount;
+    tool("finish", "Your friend's support helped you feel less alone.");
+    assert.equal(participantResponseBatchCount, batch);
+    assert.equal(closingAuthorized, true);
+    play(currentExactClosing());
+    assert.notEqual(automaticStopOptions, null);
+  }
+
+  // Gratitude words must not silently remove a content-grounded response.
+  freshTask(); askCheck(); user("I felt thankful my friend stayed with me.");
+  tool("finish", "You felt thankful that your friend stayed with you.");
+  assert.equal(closingAuthorized, true);
+  assert.equal(sentEvents.filter(e => e.type === "response.create").at(-1).response.instructions.includes("thankful"), true);
+  play(currentExactClosing());
+  assert.equal(closingAcknowledgmentDelivered, true);
+
+  // Hearing the fixed farewell alone cannot prove the acknowledgment played.
+  freshTask(); askCheck(); user("My friend stayed with me.");
+  tool("finish", "Your friend's presence mattered to you.");
+  play(currentExactClosing(), undefined, false, false);
+  assert.equal(automaticStopOptions, null);
+  assert.equal(closingAcknowledgmentDelivered, false);
+  assert.equal(closingRetryCount, 1);
+  assert.equal(sentEvents.filter(e => e.type === "response.create").at(-1).response.instructions.includes("presence mattered"), true);
+  play(currentExactClosing());
+  assert.notEqual(automaticStopOptions, null);
 
   // Clock begins at opening audio, not transcription; preparation/transition excluded.
   freshTask("affective", "positive", null);
@@ -584,7 +680,8 @@ const harness = String.raw`
   const closingRequest = sentEvents.filter(e => e.type === "response.create").at(-1);
   assert.equal(closingRequest.response.tools.length, 0);
   assert.equal(closingRequest.response.instructions.includes(currentExactClosing()), true);
-  play("You enjoyed sharing that time with your friend. That completes our conversation. Thank you.", undefined, true);
+  assert.equal(closingRequest.response.instructions.startsWith(studyConfig.voice_delivery_instructions + "\n\n"), true);
+  play("You enjoyed sharing that time with your friend. " + currentExactClosing(), undefined, true);
   assert.equal(automaticStopOptions.advanceToNextTask, true);
   assert.equal(microphoneTrack.enabled, false);
   assert.equal(pacingTimerId, null);
@@ -596,6 +693,47 @@ const harness = String.raw`
   user("No, nothing else.");
   tool("finish");
   assert.equal(closingAuthorized, true);
+
+  // Both memory tasks honor a final decline without an added recap. Specific
+  // empathy happens when sharing is received, and the fixed closing gives thanks.
+  for (const task of ["positive", "negative"]) {
+    freshTask("affective", task);
+    user(task === "positive" ? "My friend made that day special."
+      : "I kept thinking about the work all day, and eating left me uncomfortable.");
+    play(task === "positive" ? "Having your friend there meant a lot to you."
+      : "The pressure kept coming back all day. Then feeling uncomfortable after eating added another difficulty.");
+    assert.equal(endingStage, "need_check");
+    assert.equal(affectiveFollowupCount, 2, "a reflection is not another follow-up");
+    assert.equal(closingAuthorized, false);
+    askCheck();
+    user("Could you repeat that?");
+    tool("finish", "Okay.");
+    assert.equal(closingAuthorized, false);
+    play(studyConfig.affective_final_check);
+    user("No, nothing else.");
+    tool("finish", "Okay.");
+    assert.equal(closingAuthorized, true);
+    const declineClosing = sentEvents.filter(e => e.type === "response.create").at(-1);
+    assert.deepEqual(declineClosing.response.input, []);
+    assert.equal(declineClosing.response.instructions.endsWith(
+      'Say exactly this and nothing else: "Okay. That completes our conversation. Thank you for sharing with me."'), true);
+    play(currentExactClosing(), undefined, true);
+    assert.equal(closingAcknowledgmentDelivered, true);
+    assert.equal(automaticStopOptions.advanceToNextTask, true);
+  }
+
+  // Additional negative sharing still needs its specific response to play;
+  // receiving the fixed thanks alone cannot substitute for that response.
+  freshTask("affective", "negative");
+  askCheck();
+  user("One more thing: my friend stayed with me, and that mattered.");
+  const additionalAck = "Your friend's presence mattered while you were having a difficult time.";
+  tool("finish", additionalAck);
+  play(currentExactClosing(), undefined, false, false);
+  assert.equal(automaticStopOptions, null);
+  assert.equal(closingAcknowledgmentDelivered, false);
+  play(additionalAck + " " + currentExactClosing());
+  assert.equal(automaticStopOptions.advanceToNextTask, true);
 
   // Cognitive may not skip its final confirmation, even after the check.
   freshTask("cognitive", "island");
@@ -618,7 +756,8 @@ const harness = String.raw`
   play(currentExactClosing());
   assert.equal(automaticStopOptions.advanceToNextTask, true);
 
-  // Leaves finishes after its last check; there is no mandatory rehearsal.
+  // A previously refined child explanation can finish after the last check;
+  // there is no mandatory full rehearsal.
   freshTask("cognitive", "leaves");
   askCheck();
   user("Nothing else.");
@@ -626,6 +765,32 @@ const harness = String.raw`
   assert.equal(closingAuthorized, true);
   play(currentExactClosing());
   assert.equal(automaticStopOptions.advanceToNextTask, true);
+
+  // The wrap-up choice counts only after real playback, not generation or
+  // cancelled speech; its receipt prevents another routine choice invitation.
+  freshTask("cognitive", "leaves", 100);
+  user("I think I understand the concept.");
+  const cancelledChoice = beginResponse();
+  handleRealtimeEvent({ type: "response.output_audio_transcript.done", response_id: cancelledChoice,
+    item_id: "unplayed-choice", transcript: studyConfig.leaves_wrapup_choice_question });
+  assert.equal(leavesWrapupChoiceDelivered, false);
+  handleRealtimeEvent({ type: "output_audio_buffer.cleared", response_id: cancelledChoice });
+  handleRealtimeEvent({ type: "output_audio_buffer.stopped", response_id: cancelledChoice });
+  handleRealtimeEvent({ type: "response.done", response: { id: cancelledChoice, status: "completed", output: [] } });
+  assert.equal(leavesWrapupChoiceDelivered, false);
+  user("What would you suggest?");
+  play(studyConfig.leaves_wrapup_choice_question);
+  assert.equal(leavesWrapupChoiceDelivered, true);
+  assert.equal(leavesWrapupControlText().includes("The example-or-explain choice has already finished playing"), true);
+  user("Yes.");
+  tool("finish");
+  assert.equal(closingAuthorized, false, "bare yes cannot silently choose a path or close");
+  play("Would you prefer an example, or to explain it yourself?");
+  user("An example, please.");
+  play("When autumn days become shorter, the leaf makes less green material. The green fades, and yellow and orange can show.");
+  assert.equal(leavesWrapupChoiceDelivered, true);
+  freshTask("cognitive", "leaves", 100);
+  assert.equal(leavesWrapupChoiceDelivered, false, "new tasks clear the choice receipt");
 
   // Accepted rewrite is still owed, including a multiword agreement.
   freshTask("cognitive", "leaves");
@@ -854,6 +1019,102 @@ const harness = String.raw`
   assert.equal(topicStartedAtMilliseconds, null);
   assert.equal(listeningRepair, null);
   assert.equal(repairSpeech.size, 0);
+  // A late transcript must not shift the gap's origin from audio completion.
+  const originalDateNow = Date.now;
+  let fakeNow = 1000000;
+  Date.now = () => fakeNow;
+  try {
+    freshTask("cognitive", "leaves");
+    askCheck(); user("Nothing else."); tool("finish");
+    const finalId = beginResponse();
+    handleRealtimeEvent({ type: "response.done", response: { id: finalId, status: "completed", output: [] } });
+    assert.equal(automaticStopOptions, null, "generation alone is not playback completion");
+    fakeNow += 200;
+    handleRealtimeEvent({ type: "output_audio_buffer.started", response_id: finalId });
+    fakeNow += 800;
+    handleRealtimeEvent({ type: "output_audio_buffer.stopped", response_id: finalId });
+    const audioEndedAt = fakeNow;
+    assert.equal(automaticStopOptions, null, "closing transcript has not yet arrived");
+    fakeNow += 400;
+    handleRealtimeEvent({ type: "response.output_audio_transcript.done", response_id: finalId,
+      item_id: "late-closing-transcript", transcript: closingAcknowledgment + " " + currentExactClosing() });
+    assert.equal(automaticStopOptions.nextTaskNotBeforeMilliseconds, audioEndedAt + 3000);
+    assert.equal(conversationEndedAtMilliseconds, audioEndedAt);
+  } finally {
+    Date.now = originalDateNow;
+    clearPacingTimer();
+  }
+
+  // Both conditions and researcher-test settings use the same playback gap.
+  // Saving/reconnection consume that gap; they never start a new 3-second wait.
+  const originalWindowSetTimeout = window.setTimeout;
+  try {
+    Date.now = () => fakeNow;
+    for (const mode of ["cognitive", "affective"]) {
+      for (const testMode of [false, true]) {
+        for (const connectionDelay of [0, 900, 3500]) {
+          const timers = [];
+          window.setTimeout = (callback, delay) => { timers.push({ callback, delay }); return timers.length; };
+          activeAssistantMode = mode;
+          activeResearcherTestMode = testMode;
+          isPreparationSession = true;
+          isStopping = false;
+          openingRequested = openingInProgress = openingPlaybackPending = false;
+          transitionPlaybackPending = false;
+          responseInProgress = false;
+          sentEvents.length = 0;
+          const previousEnd = 2000000;
+          const deadline = previousEnd + 3000;
+          fakeNow = previousEnd + connectionDelay;
+          const transition = requestTransitionWhenReady(deadline);
+          if (connectionDelay < 3000) {
+            assert.equal(timers[0].delay, 3000 - connectionDelay);
+            assert.equal(sentEvents.some(e => e.type === "response.create"), false);
+            // An early timer wake must wait again, rather than speaking early.
+            fakeNow = deadline - 1;
+            timers[0].callback();
+            await Promise.resolve();
+            assert.equal(timers.at(-1).delay, 1);
+            assert.equal(sentEvents.some(e => e.type === "response.create"), false);
+            fakeNow = deadline;
+            timers.at(-1).callback();
+          } else {
+            assert.equal(timers.length, 0, "no added wait after slow reconnect");
+          }
+          assert.equal(await transition, true);
+          assert.equal(sentEvents.filter(e => e.type === "response.create").length, 1);
+          assert.equal(taskTransitionTiming.previous_closing_ended_at_ms, previousEnd);
+          handleRealtimeEvent({ type: "output_audio_buffer.started", response_id: "timed-transition" });
+          assert.equal(taskTransitionTiming.actual_gap_seconds >= 3, true);
+          assistantAudioPlaying = false;
+        }
+      }
+    }
+
+    // A pending transition cannot speak into a replaced/disconnected session.
+    const timers = [];
+    window.setTimeout = (callback, delay) => { timers.push({ callback, delay }); return timers.length; };
+    isPreparationSession = true;
+    isStopping = false;
+    openingRequested = false;
+    sentEvents.length = 0;
+    fakeNow = 3000000;
+    const cancelledTransition = requestTransitionWhenReady(fakeNow + 3000);
+    const previousChannel = dataChannel;
+    dataChannel = { readyState: "closed" };
+    fakeNow += 3000;
+    timers[0].callback();
+    assert.equal(await cancelledTransition, false);
+    assert.equal(sentEvents.some(e => e.type === "response.create"), false);
+    dataChannel = previousChannel;
+  } finally {
+    Date.now = originalDateNow;
+    window.setTimeout = originalWindowSetTimeout;
+    activeResearcherTestMode = false;
+    isPreparationSession = false;
+    isStopping = false;
+    assistantAudioPlaying = false;
+  }
   stopSession = originalStopSession;
 
   handleRealtimeEvent({
@@ -875,7 +1136,7 @@ const harness = String.raw`
             interrupt_response: false,
           },
         },
-        output: { voice: "marin", speed: 1 },
+        output: { voice: "marin", speed: 1.0 },
       },
     },
   });

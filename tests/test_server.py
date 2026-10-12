@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import server
 from assistant_modes import (
+    AFFECTIVE_CLOSING,
     AFFECTIVE_FINAL_CHECK,
     AFFECTIVE_FINALIZATION_ELAPSED_SECONDS,
     AFFECTIVE_MINIMUM_RESPONSE_BATCHES,
@@ -19,10 +20,13 @@ from assistant_modes import (
     DESERT_ISLAND_ITEMS,
     FINALIZATION_ELAPSED_SECONDS,
     LEAVES_REHEARSAL_QUESTION,
+    LEAVES_WRAPUP_CHOICE_QUESTION,
     MAXIMUM_CONVERSATION_ELAPSED_SECONDS,
     PREPARATION_SECONDS,
     PROMPT_VERSION,
+    SHARED_VOICE_DELIVERY_INSTRUCTIONS,
     SECOND_TASK_TRANSITION,
+    TASK_TRANSITION_PAUSE_SECONDS,
     TASKS,
     TASK_ONE_CLOSING,
     TASK_TWO_CLOSING,
@@ -122,8 +126,10 @@ class ServerTests(unittest.TestCase):
                     self.assertNotIn("temperature", payload)
                     self.assertIn("# Context before support", payload["instructions"])
                     self.assertIn("Ask at most one main question", payload["instructions"])
+                    self.assertIn(SHARED_VOICE_DELIVERY_INSTRUCTIONS, payload["instructions"])
                     self.assertIn("[STUDY PACING CONTROL]", payload["instructions"])
                     closing = (
+                        AFFECTIVE_CLOSING if condition == "affective" else
                         TASK_ONE_CLOSING if position == 1 else TASK_TWO_CLOSING
                     )
                     self.assertIn(closing, payload["instructions"])
@@ -157,10 +163,15 @@ class ServerTests(unittest.TestCase):
         self.assertIn("A suggestion is never a selection", island)
         self.assertIn("Never silently guess", island)
 
-        self.assertIn("Usually around three substantive follow-ups", positive)
+        self.assertIn("usually aim for three", positive)
         self.assertIn(AFFECTIVE_FINAL_CHECK, positive)
         self.assertIn("study_progress", positive)
-        self.assertIn("three to five minutes", positive)
+        self.assertIn("four to five minutes", positive)
+        self.assertIn("at least two substantive", positive)
+        self.assertIn("clear refusal", positive)
+        self.assertIn("finalized child-ready answer", leaves)
+        self.assertIn("example is allowed even early", leaves)
+        self.assertIn("For every finish or stop call", positive)
         self.assertIn("Sound like an attentive conversation partner", positive)
         self.assertIn("Do not name an abstract theme", positive)
         self.assertIn("Do not ask the Cognitive completeness question", positive)
@@ -179,7 +190,12 @@ class ServerTests(unittest.TestCase):
             {"name": "Buzz", "voice": "marin", "speed": 1.0},
         )
         self.assertEqual(config["preparation_seconds"], PREPARATION_SECONDS)
+        self.assertEqual(config["task_transition_pause_seconds"], TASK_TRANSITION_PAUSE_SECONDS)
+        self.assertEqual(TASK_TRANSITION_PAUSE_SECONDS, 3)
+        self.assertEqual(config["voice_delivery_instructions"], SHARED_VOICE_DELIVERY_INSTRUCTIONS)
         self.assertEqual(config["transition"], SECOND_TASK_TRANSITION)
+        self.assertEqual(config["affective_closing"], AFFECTIVE_CLOSING)
+        self.assertEqual(config["leaves_wrapup_choice_question"], LEAVES_WRAPUP_CHOICE_QUESTION)
         self.assertEqual(
             config["closings"],
             {"task_one": TASK_ONE_CLOSING, "task_two": TASK_TWO_CLOSING},
@@ -235,7 +251,17 @@ class ServerTests(unittest.TestCase):
         self.assertIn("clothing and drinking water", island_text)
         self.assertNotIn("Nomi", json.dumps(config))
         public_json = json.dumps(config)
+        # Participants use a printed list; item options stay in the agent prompt.
+        self.assertIn("printed item list", island_text)
+        self.assertNotIn("Available items and quantities", island_text)
+        self.assertFalse(any(
+            block.get("layout") == "two_columns"
+            for block in config["tasks"]["island"]["participant_instruction"]["blocks"]
+        ))
+        for item in DESERT_ISLAND_ITEMS:
+            self.assertNotIn(item, island_text)
         self.assertNotIn("First-aid kit", public_json)
+        self.assertEqual(config["affective_followups"], {"minimum": 2, "target": 3})
         self.assertNotIn("route_instructions", public_json)
         self.assertNotIn("# Cognitive condition objective", public_json)
 
@@ -272,7 +298,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(TASK_TWO_CLOSING, TASK_ONE_CLOSING)
         for task in config["tasks"].values():
             timings = [b for b in task["participant_instruction"]["blocks"] if b["type"] == "timing"]
-            self.assertEqual(timings[1]["segments"][0]["text"], "3–5 minutes")
+            self.assertEqual(timings[1]["segments"][0]["text"], "4–5 minutes")
             self.assertEqual(timings[0]["segments"][0]["text"], "1 minute")
         self.assertEqual(
             config["realtime"]["response_trigger"],
