@@ -462,7 +462,7 @@ summary {
   margin: 26px auto 0;
   padding: 13px 18px;
   border: 1px solid rgba(179, 144, 81, 0.45);
-  border-radius: 999px;
+  border-radius: 12px;
   color: var(--gt-navy);
   background: var(--gt-diploma);
   font-size: 0.92rem;
@@ -482,10 +482,12 @@ blockquote {
   text-align: left;
 }
 
-.recording-notice {
-  margin: 24px 0 0;
-  color: #79837f;
-  font-size: 0.78rem;
+.participant-copy .recording-notice {
+  margin: 7px 0 0;
+  color: var(--gt-navy);
+  font-size: inherit;
+  line-height: inherit;
+  text-align: left;
 }
 
 .participant-action {
@@ -703,4 +705,40 @@ audio {
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
   }
+}
+
+/* Participant feedback stays together: name, animation, then live state. */
+.conversation-card #voiceOrb { margin: 18px 0 0; }
+.voice-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.5em;
+  margin: 14px 0 0;
+  padding: 8px 16px;
+  border: 1px solid #d8cba9;
+  border-radius: 9px;
+  background: #f9f6e5;
+  color: var(--gt-navy);
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+}
+#researcherPinDialog {
+  width: min(420px, calc(100vw - 40px));
+  padding: 28px;
+  border: 1px solid #d8cba9;
+  border-radius: 20px;
+  color: var(--gt-navy);
+  background: #fffdf7;
+}
+#researcherPinDialog::backdrop { background: rgba(5, 28, 52, 0.35); }
+#researcherPinDialog h2 { margin: 0 0 20px; }
+#researcherPin { display: block; width: 100%; margin-top: 8px; }
+#researcherPinError { min-height: 1.5em; color: #7a4538; }
+.pin-actions { display: flex; align-items: center; justify-content: flex-end; gap: 16px; }
+.pin-actions .text-button { margin: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .voice-orb span { animation: none; }
 }

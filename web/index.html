@@ -61,11 +61,11 @@
             <div class="choice-grid two-column">
               <label class="choice-card">
                 <input type="radio" name="taskOrder" value="order_1" checked />
-                <span><strong id="orderOneLabel">Leaves → Desert Island</strong></span>
+                <span><strong id="orderOneLabel">North Pole → Deserted Island</strong></span>
               </label>
               <label class="choice-card">
                 <input type="radio" name="taskOrder" value="order_2" />
-                <span><strong id="orderTwoLabel">Desert Island → Leaves</strong></span>
+                <span><strong id="orderTwoLabel">Deserted Island → North Pole</strong></span>
               </label>
             </div>
           </fieldset>
@@ -77,6 +77,10 @@
               <small>Skip the one-minute preparation wait for testing only.</small>
             </span>
           </label>
+
+          <p class="hint researcher-pin-note">
+            Researcher return PIN: <strong>7890</strong>. Use the “Return to researcher setup” link to return during an activity.
+          </p>
 
           <div class="actions">
             <button id="prepareButton" class="primary" type="button" disabled>
@@ -123,12 +127,12 @@
           <p class="participant-name">Buzz</p>
           <p id="taskProgress" class="eyebrow participant-eyebrow"></p>
           <h1 id="participantInstructionHeading"></h1>
-          <div id="participantInstructionBody" class="participant-copy"></div>
+          <div class="participant-copy">
+            <div id="participantInstructionBody"></div>
+            <p class="recording-notice">Your conversation with Buzz will be recorded for this study.</p>
+          </div>
           <p id="preparationStatus" class="preparation-status" role="status">
             Take one minute to think before you begin.
-          </p>
-          <p class="recording-notice">
-            Your conversation with Buzz will be recorded for this study.
           </p>
           <button
             id="startButton"
@@ -151,11 +155,12 @@
         hidden
       >
         <div class="conversation-card">
+          <p class="eyebrow participant-eyebrow">Conversation with</p>
+          <h1 id="conversationHeading">Buzz</h1>
           <div id="voiceOrb" class="voice-orb idle" aria-hidden="true">
             <span></span><span></span><span></span>
           </div>
-          <p class="eyebrow participant-eyebrow">Conversation with</p>
-          <h1 id="conversationHeading">Buzz</h1>
+          <p id="voiceState" class="voice-state" role="status" aria-live="polite" hidden></p>
 
           <section
             id="conversationInstruction"
@@ -171,16 +176,29 @@
           <p id="recordingStatus" class="recording-state" hidden></p>
 
           <div class="conversation-actions">
-            <button id="stopButton" class="end-button" type="button" disabled>
+            <button id="stopButton" class="end-button" type="button" hidden disabled>
               End activity
             </button>
-            <button id="returnButton" class="primary" type="button" hidden>
+            <button id="returnButton" class="text-button" type="button" hidden>
               Return to researcher setup
             </button>
           </div>
         </div>
       </section>
 
+      <dialog id="researcherPinDialog" aria-labelledby="researcherPinHeading">
+        <form id="researcherPinForm">
+          <h2 id="researcherPinHeading">Researcher access</h2>
+          <label for="researcherPin">Enter researcher PIN</label>
+          <input id="researcherPin" type="password" inputmode="numeric"
+                 pattern="[0-9]{4}" maxlength="4" autocomplete="off" required />
+          <p id="researcherPinError" role="alert"></p>
+          <div class="pin-actions">
+            <button id="researcherPinCancel" type="button" class="text-button">Cancel</button>
+            <button type="submit" class="end-button">Return to setup</button>
+          </div>
+        </form>
+      </dialog>
       <audio id="remoteAudio" autoplay playsinline></audio>
     </main>
 

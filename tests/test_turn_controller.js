@@ -16,6 +16,8 @@ class FakeElement {
     this.value = "";
     this.checked = false;
     this.isConnected = false;
+    this.listeners = new Map();
+    this.open = false;
     this._classes = new Set();
     this.classList = {
       add: (...names) => {
@@ -28,7 +30,16 @@ class FakeElement {
     };
   }
 
-  addEventListener() {}
+  addEventListener(type, callback) {
+    const callbacks = this.listeners.get(type) || [];
+    callbacks.push(callback);
+    this.listeners.set(type, callbacks);
+  }
+  async dispatch(type, event = {}) {
+    for (const callback of this.listeners.get(type) || []) await callback(event);
+  }
+  showModal() { this.open = true; }
+  close() { this.open = false; void this.dispatch('close'); }
   setCustomValidity() {}
   reportValidity() {}
   focus() {}
@@ -118,8 +129,6 @@ const harness = String.raw`
     affective_closing: "That completes our conversation. Thank you for sharing with me.",
     affective_followups: { minimum: 2, target: 3 },
     cognitive_completeness_check: "Before we finalize it, is there anything important we missed or anything you'd like to reconsider?",
-    leaves_rehearsal_question: "Would you like to try saying your final explanation in one or two sentences, as if you were speaking to the child?",
-    leaves_wrapup_choice_question: "Would you like me to give an example based on what we've discussed, or would you like to try explaining it as if I were the child?",
     pacing: {
       minimum_synthesis_elapsed_seconds: 180,
       minimum_response_batches: 0,
@@ -161,16 +170,16 @@ const harness = String.raw`
   activeParticipantId = "PTEST";
   activeAssistantMode = "cognitive";
   activeModeProfile = { label: "Cognitive" };
-  activeOrderId = "leaves_island";
-  activeTaskSequence = ["leaves", "island"];
+  activeOrderId = "north_pole_island";
+  activeTaskSequence = ["north_pole", "island"];
   activeTaskIndex = 0;
-  activeTaskId = "leaves";
+  activeTaskId = "north_pole";
   activeTaskProfile = {
-    label: "Autumn Leaves",
+    label: "North Pole",
     opening_first:
-      "Hello, I'm Buzz. How would you explain why leaves change color in autumn to a seven-year-old?",
+      "Hello, I'm Buzz. Which three items did you choose for the North Pole?",
     opening_later:
-      "How would you explain why leaves change color in autumn to a seven-year-old?",
+      "Which three items did you choose for the North Pole?",
     participant_instruction: {
       title: "Leaves",
       blocks: [
@@ -373,7 +382,7 @@ const harness = String.raw`
     .at(-1);
   assert.equal(firstOpening.response.input.length, 0);
   assert.equal(firstOpening.response.instructions.endsWith(
-    'Say exactly this and nothing else: "Hello, I\'m Buzz. How would you explain why leaves change color in autumn to a seven-year-old?"',
+    'Say exactly this and nothing else: "Hello, I\'m Buzz. Which three items did you choose for the North Pole?"',
   ), true);
 
   openingRequested = false;
@@ -424,7 +433,7 @@ const harness = String.raw`
     response_id: "transition-response",
   });
   assert.equal(startButton.disabled, true);
-  assert.equal(startButton.textContent, "Take a moment to think");
+  assert.equal(startButton.textContent, "Start in 1:00");
   assert.equal(preparationOrb.classList.contains("idle"), true);
   clearPreparationTimer();
 
@@ -736,7 +745,8 @@ const harness = String.raw`
   assert.equal(automaticStopOptions.advanceToNextTask, true);
 
   // Cognitive may not skip its final confirmation, even after the check.
-  freshTask("cognitive", "island");
+  for (const task of ["island", "north_pole"]) {
+  freshTask("cognitive", task);
   askCheck();
   user("No changes.");
   tool("finish");
@@ -756,44 +766,10 @@ const harness = String.raw`
   play(currentExactClosing());
   assert.equal(automaticStopOptions.advanceToNextTask, true);
 
-  // A previously refined child explanation can finish after the last check;
-  // there is no mandatory full rehearsal.
-  freshTask("cognitive", "leaves");
-  askCheck();
-  user("Nothing else.");
-  tool("finish");
-  assert.equal(closingAuthorized, true);
-  play(currentExactClosing());
-  assert.equal(automaticStopOptions.advanceToNextTask, true);
+  }
 
-  // The wrap-up choice counts only after real playback, not generation or
-  // cancelled speech; its receipt prevents another routine choice invitation.
-  freshTask("cognitive", "leaves", 100);
-  user("I think I understand the concept.");
-  const cancelledChoice = beginResponse();
-  handleRealtimeEvent({ type: "response.output_audio_transcript.done", response_id: cancelledChoice,
-    item_id: "unplayed-choice", transcript: studyConfig.leaves_wrapup_choice_question });
-  assert.equal(leavesWrapupChoiceDelivered, false);
-  handleRealtimeEvent({ type: "output_audio_buffer.cleared", response_id: cancelledChoice });
-  handleRealtimeEvent({ type: "output_audio_buffer.stopped", response_id: cancelledChoice });
-  handleRealtimeEvent({ type: "response.done", response: { id: cancelledChoice, status: "completed", output: [] } });
-  assert.equal(leavesWrapupChoiceDelivered, false);
-  user("What would you suggest?");
-  play(studyConfig.leaves_wrapup_choice_question);
-  assert.equal(leavesWrapupChoiceDelivered, true);
-  assert.equal(leavesWrapupControlText().includes("The example-or-explain choice has already finished playing"), true);
-  user("Yes.");
-  tool("finish");
-  assert.equal(closingAuthorized, false, "bare yes cannot silently choose a path or close");
-  play("Would you prefer an example, or to explain it yourself?");
-  user("An example, please.");
-  play("When autumn days become shorter, the leaf makes less green material. The green fades, and yellow and orange can show.");
-  assert.equal(leavesWrapupChoiceDelivered, true);
-  freshTask("cognitive", "leaves", 100);
-  assert.equal(leavesWrapupChoiceDelivered, false, "new tasks clear the choice receipt");
-
-  // Accepted rewrite is still owed, including a multiword agreement.
-  freshTask("cognitive", "leaves");
+  // Accepted help is still owed, including a multiword agreement.
+  freshTask("cognitive", "north_pole");
   askCheck();
   user("Could you help me phrase it?");
   play("If you'd like, I can help smooth that into a shorter final version.");
@@ -804,7 +780,7 @@ const harness = String.raw`
   play("In autumn, the tree replaces less green material. As it fades, yellow and orange show through; some leaves also make red.");
   user("That works, nothing else.");
   assert.equal(listeningRepair, null);
-  tool("finish");
+  tool("finish", "Okay.", "participant_done");
   assert.equal(closingAuthorized, true);
 
   // Missing closing phrase retries once, including reversed transcript/playback order.
@@ -823,7 +799,7 @@ const harness = String.raw`
   assert.equal(automaticStopOptions.advanceToNextTask, false);
   assert.equal(closingReason, "closing_delivery_failed");
 
-  freshTask("cognitive", "leaves", 100);
+  freshTask("cognitive", "north_pole", 100);
   user("The leaves change color.");
   const latePlayback = beginResponse();
   speechInProgress = true;
@@ -897,6 +873,127 @@ const harness = String.raw`
   play(currentExactClosing());
   assert.notEqual(automaticStopOptions, null);
 
+
+  // Participant-led completion before three minutes: replay the pilot's context,
+  // then require real closing playback before saving or moving to activity two.
+  for (const task of ["positive", "negative"]) {
+    freshTask("affective", task, 150, 0);
+    deliveredAssistantText = "If you'd like, you can linger on that memory a bit more.";
+    user("I'm good.");
+    tool("finish", "Okay.", "participant_done");
+    assert.equal(closingAuthorized, true);
+    assert.equal(closingReason, "participant_done");
+    assert.equal(automaticStopOptions, null);
+    play(currentExactClosing());
+    assert.equal(automaticStopOptions.advanceToNextTask, true);
+  }
+  for (const text of ["OK", "Yes", "Not much", "I don't know", "I'm good"]) {
+    freshTask("affective", "positive", 100);
+    deliveredAssistantText = "How do you feel about that?";
+    user(text);
+    tool("finish", "Okay.", "participant_done");
+    assert.equal(closingAuthorized, false, text + " is not a contextual completion");
+  }
+  freshTask("affective", "positive", 100);
+  deliveredAssistantText = "Would you like to share more?";
+  user("I want to stop the whole study.");
+  tool("finish", "Okay.", "participant_done");
+  assert.equal(closingAuthorized, false);
+  play("Okay.");
+  user("I want to stop the study.");
+  tool("stop", "Okay.", "participant_stop");
+  play(currentExactClosing());
+  assert.equal(automaticStopOptions.advanceToNextTask, false);
+
+  freshTask("affective", "positive", 100);
+  activeTaskIndex = 1;
+  user("I have nothing else to add.");
+  tool("finish", "Okay.", "participant_done");
+  play(currentExactClosing());
+  assert.equal(automaticStopOptions.advanceToNextTask, false);
+
+  // A late generation-complete event must not falsely display listening before playback.
+  freshTask();
+  user("Here is my answer.");
+  const stateResponse = beginResponse();
+  assert.equal(voiceStateElement.textContent, "Buzz is thinking");
+  handleRealtimeEvent({type: "response.done", response: {id: stateResponse, status: "completed", output: []}});
+  assert.equal(voiceStateElement.textContent, "Buzz is thinking");
+  handleRealtimeEvent({type: "output_audio_buffer.started", response_id: stateResponse});
+  assert.equal(voiceStateElement.textContent, "Buzz is speaking");
+  handleRealtimeEvent({type: "output_audio_buffer.stopped", response_id: stateResponse});
+  assert.equal(voiceStateElement.textContent, "Buzz is listening");
+
+  // Both researcher-return buttons are gated, and Cancel/wrong PIN do not execute navigation.
+  freshTask();
+  let navigations = 0;
+  requestResearcherAccess(() => { navigations++; });
+  researcherPinInput.value = "1111";
+  await researcherPinForm.dispatch("submit", {preventDefault() {}});
+  assert.equal(navigations, 0);
+  assert.equal(researcherPinDialog.open, true);
+  assert.match(researcherPinError.textContent, /Incorrect PIN/);
+  await researcherPinCancel.dispatch("click");
+  assert.equal(researcherPinDialog.open, false);
+  assert.equal(pendingResearcherAction, null);
+  requestResearcherAccess(() => { navigations++; });
+  researcherPinInput.value = "7890";
+  await researcherPinForm.dispatch("submit", {preventDefault() {}});
+  assert.equal(navigations, 1);
+  assert.equal(researcherPinInput.value, "");
+  await backButton.dispatch("click");
+  assert.equal(researcherPinDialog.open, true);
+  assert.equal(pendingResearcherAction, backToResearcherSetup);
+  researcherPinDialog.close();
+  await returnButton.dispatch("click");
+  assert.equal(researcherPinDialog.open, true);
+  assert.equal(pendingResearcherAction, returnFromConversationToSetup);
+  researcherPinDialog.close();
+
+  // Live return requires the PIN and waits for saving before exposing setup.
+  const previousReturnStop = stopSession;
+  const previousReturnChannel = dataChannel;
+  const previousReturnEstablished = sessionWasEstablished;
+  let releaseReturnSave;
+  let returnSaveOptions = null;
+  const returnSavePending = new Promise(resolve => { releaseReturnSave = resolve; });
+  stopSession = async (options) => {
+    returnSaveOptions = options;
+    isStopping = true;
+    await returnSavePending;
+    isStopping = false;
+  };
+  sessionWasEstablished = true;
+  returnButton.disabled = false;
+  showView(conversationView);
+  await returnButton.dispatch("click");
+  researcherPinInput.value = "1111";
+  await researcherPinForm.dispatch("submit", {preventDefault() {}});
+  assert.equal(returnSaveOptions, null);
+  assert.equal(researcherView.hidden, true);
+  researcherPinInput.value = "7890";
+  const returnNavigation = researcherPinForm.dispatch("submit", {preventDefault() {}});
+  assert.equal(returnSaveOptions.manualStop, true);
+  assert.equal(returnSaveOptions.advanceToNextTask, false);
+  assert.notEqual(returnSaveOptions.saveRecording, false);
+  assert.equal(returnButton.disabled, true);
+  assert.equal(researcherView.hidden, true);
+  releaseReturnSave();
+  await returnNavigation;
+  assert.equal(researcherView.hidden, false);
+  assert.equal(returnButton.disabled, false);
+  stopSession = previousReturnStop;
+  dataChannel = previousReturnChannel;
+  sessionWasEstablished = previousReturnEstablished;
+
+  activeResearcherTestMode = false;
+  await stopButton.dispatch("click");
+  assert.equal(automaticStopOptions, null);
+  activeResearcherTestMode = true;
+  await stopButton.dispatch("click");
+  assert.equal(automaticStopOptions.manualStop, true);
+  activeResearcherTestMode = false;
+
   // Explicit stop bypasses the floor and never advances automatically to task two.
   freshTask("affective", "negative", 30);
   user("I want to stop now.");
@@ -946,7 +1043,7 @@ const harness = String.raw`
   assert.equal(sentEvents.at(-1).response.metadata.controller_kind, "ending_check");
 
   // Regression: a mechanism question crossing 4:00 takes priority over the check.
-  freshTask("cognitive", "leaves", 280);
+  freshTask("cognitive", "north_pole", 280);
   user("Wait, so you're saying cold weather signals trees are slowing down, and that's why red and orange color show up?");
   assert.notEqual(listeningRepair, null);
   assert.equal(endingStage, "need_check");
@@ -994,7 +1091,7 @@ const harness = String.raw`
   assert.equal(endingControlText().includes("apology alone is not repair"), true);
 
   // Semantic fallback: the model can request a hold even without a matched phrase.
-  freshTask("cognitive", "leaves");
+  freshTask("cognitive", "north_pole");
   askCheck();
   user("The green part still seems mysterious to me.");
   tool("repair_needed");
@@ -1024,8 +1121,8 @@ const harness = String.raw`
   let fakeNow = 1000000;
   Date.now = () => fakeNow;
   try {
-    freshTask("cognitive", "leaves");
-    askCheck(); user("Nothing else."); tool("finish");
+    freshTask("cognitive", "north_pole");
+    askCheck(); user("Nothing else."); tool("finish", "Okay.", "participant_done");
     const finalId = beginResponse();
     handleRealtimeEvent({ type: "response.done", response: { id: finalId, status: "completed", output: [] } });
     assert.equal(automaticStopOptions, null, "generation alone is not playback completion");
@@ -1144,6 +1241,63 @@ const harness = String.raw`
     latestAppliedSessionSettings.audio_input.turn_detection.create_response,
     false,
   );
+
+  // Deadline-based countdown remains correct after a delayed/background tick.
+  const realNow = Date.now;
+  const realSetTimeout = window.setTimeout;
+  const realClearTimeout = window.clearTimeout;
+  let clock = 100000;
+  let tick = null;
+  Date.now = () => clock;
+  window.setTimeout = (callback) => { tick = callback; return 77; };
+  window.clearTimeout = () => { tick = null; };
+  activeResearcherTestMode = false;
+  beginPreparationWindow("countdown_test");
+  assert.equal(startButton.textContent, "Start in 1:00");
+  assert.equal(startButton.disabled, true);
+  clock += 17000;
+  tick();
+  assert.equal(startButton.textContent, "Start in 0:43");
+  assert.equal(startButton.disabled, true);
+  clock += 43000;
+  tick();
+  assert.equal(startButton.textContent, "Start conversation with Buzz");
+  assert.equal(startButton.disabled, false);
+  assert.equal(preparationTimerId, null);
+  beginPreparationWindow("cancel_countdown");
+  clearPreparationTimer();
+  assert.equal(tick, null);
+  Date.now = realNow;
+  window.setTimeout = realSetTimeout;
+  window.clearTimeout = realClearTimeout;
+
+  // Returning from activity 2 closes its preparation resources and preserves
+  // the already-saved activity 1 results, without saving a phantom activity 2.
+  activeTaskIndex = 1;
+  activeTaskProfile.participant_instruction = { title: "Second activity", blocks: [] };
+  renderActiveTaskPreparation();
+  assert.equal(backButton.hidden, false);
+  assert.equal(backButton.disabled, false);
+  savedTaskSummaries = ["Activity 1 saved successfully"];
+  let channelClosed = false;
+  let peerClosed = false;
+  let microphoneStopped = false;
+  dataChannel = { close() { channelClosed = true; } };
+  peerConnection = { close() { peerClosed = true; } };
+  microphoneStream = { getAudioTracks() { return []; }, getTracks() { return [{ stop() { microphoneStopped = true; } }]; } };
+  sessionWasEstablished = true;
+  isPreparationSession = true;
+  isStopping = false;
+  beginPreparationWindow("exit_test");
+  await backToResearcherSetup();
+  assert.equal(channelClosed && peerClosed && microphoneStopped, true);
+  assert.equal(dataChannel, null);
+  assert.equal(peerConnection, null);
+  assert.equal(microphoneStream, null);
+  assert.equal(preparationTimerId, null);
+  assert.equal(researcherView.hidden, false);
+  assert.equal(savedFilesSummary.textContent, "Activity 1 saved successfully");
+  assert.equal(savedTaskSummaries.length, 1);
 
   console.log("Buzz turn-controller and task-flow test passed");
 })().catch((error) => {

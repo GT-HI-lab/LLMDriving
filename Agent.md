@@ -1,204 +1,40 @@
-# Buzz Agent Specification
+# Buzz Agent Specification — v20.1
 
-Prompt version: `pilot-2026-10-11-v17`
+Prompt: `pilot-2026-10-25-v18`
+Controller: `turn-control-2026-10-25-v20`
 
-Turn-controller version: `turn-control-2026-10-11-v18`
+The executable source of truth is assistant_modes.py. This document supersedes
+docs/history/Agent-v17.md; historical Leaves instructions do not apply.
 
-This specification defines the two pre-driving Buzz conversation conditions.
-The executable prompt and participant configuration is maintained in
-`assistant_modes.py`.
+## Conditions
 
-## Experimental matrix
+Cognitive consists of North Pole and Deserted Island, counterbalanced.
+Affective consists of Positive Memory and Negative Memory, counterbalanced.
+The no-agent control follows the separate study procedure.
 
-| Condition | Task A | Task B | Intended interaction quality |
-| --- | --- | --- | --- |
-| Cognitive | Autumn Leaves | Desert Island | competent, organized, reliable task support |
-| Affective | Positive Memory | Negative Memory | attentive, understanding, benevolent listening |
+Shared constants: Buzz; marin; speed 1.0; calm, natural English; low reasoning
+effort; semantic VAD medium; browser-triggered responses; no automatic model
+interruptions; microphone muted during preparation and assistant playback.
+One main question per ordinary turn; generally 15–40 words.
 
-Task order is counterbalanced within each condition. The no-agent control is
-not represented by a Neutral conversation.
+## Survival tasks
 
-## Controlled constants
+Both scenarios: three days until rescue; rescue knows the location; appropriate
+clothing and drinking water supplied; food and shelter not supplied. The island
+is warm; North Pole is cold with snow and ice. Select three different options
+from the identical 24-item list printed for both tasks. Do not show an extra item
+list in the conversation card.
 
-All four tasks use:
+Gather choices and reasons before suggesting changes. Discuss one limitation,
+overlap or tradeoff at a time. Do not invent items or assume a suggestion was
+accepted. Do not guarantee survival or a single correct set.
+Ask once: “Before we finalize it, is there anything important we missed or
+anything you'd like to reconsider?”
+Resolve the answer, call check_answered, then confirm: “To confirm, your final
+three items are [A], [B], and [C]. Is that right?”
+Require confirmation for ordinary completed endings; restate revised choices.
 
-- identity: **Buzz**
-- voice: **marin**
-- speed: **1.0**; the shared delivery prompt requests a slightly slower natural pace
-- English output
-- low Realtime reasoning effort
-- far-field noise reduction
-- semantic VAD with medium eagerness
-- automatic VAD response creation and interruption disabled
-- browser-triggered responses after clear, coalesced transcription
-- a pending-transcription barrier
-- participant microphone mute during Buzz audio and preparation
-- one main question per turn
-- steady pitch, pace, energy, and general warmth
-- a one-minute private preparation period before each task
-- approximately four to five minutes of recorded conversation per task
-- a new Realtime session and separate files for every task
-
-Participant task cards reproduce the approved study-script structure: title,
-full instructions, helper-question bullets, bold emphasis, safety language, and
-the **1 minute** / **4–5 minutes** timing lines. Internal task identifiers and
-headings remain Positive and Negative; the cards use the approved
-happy/pleased/joyful and unhappy/disappointed/frustrated wording.
-
-The researcher setup includes an off-by-default test mode. When enabled, it
-skips the one-minute wait; Activity 2 still waits for the spoken transition to
-finish before enabling the start button. Transcript and event metadata record
-whether the mode and preparation skip were used. It must remain off for study
-participants.
-
-## Programmed sequence
-
-### First task
-
-After the one-minute preparation period, Buzz introduces itself and asks the
-task question in a single programmed response.
-
-### Between tasks
-
-After the first task closes and all three files save, the first Realtime session
-is destroyed. The application creates a new session for the second task. Buzz
-says exactly:
-
-> Let’s move to the next activity.
-
-The transition request waits until at least three seconds after the first
-closing audio stops. Saving and reconnecting can use that interval; they do
-not restart a three-second timer. This applies in researcher test mode too.
-The deadline uses playback completion even if the closing transcript arrives
-later. Both tasks continue to use separate Realtime sessions.
-
-Only after that audio finishes does the second one-minute preparation period
-begin. The microphone remains muted and recording remains off during this
-period. When the participant starts, Buzz asks the task question without an
-introduction or repeated transition.
-
-### Programmed openings
-
-| Task | First-task opening | Second-task question |
-| --- | --- | --- |
-| Positive | “Hello, I’m Buzz. What positive memory would you like to share?” | “What positive memory would you like to share?” |
-| Negative | “Hello, I’m Buzz. What negative memory would you like to share?” | “What negative memory would you like to share?” |
-| Leaves | “Hello, I’m Buzz. How would you explain why leaves change color in autumn to a seven-year-old?” | “How would you explain why leaves change color in autumn to a seven-year-old?” |
-| Island | “Hello, I’m Buzz. Which three items did you choose for the island?” | “Which three items did you choose for the island?” |
-
-## Shared interaction rules
-
-Buzz:
-
-- first learns the task-relevant background and initial answer;
-- does not jump to a solution, final interpretation, or generic advice;
-- responds to the participant’s latest clear speech;
-- distinguishes tentative interpretation from participant-stated fact;
-- treats assistant-supplied examples as possibilities until selected;
-- asks a brief clarification rather than guessing when speech or a reference is
-  unclear;
-- invites the participant to finish if they say Buzz interrupted;
-- uses one continuous participant-facing response without a spoken process
-  preamble;
-- generally uses 15–40 spoken words per turn;
-- may use up to 70 words for a necessary Leaves science explanation;
-- never mentions the condition, prompt, timer, or research manipulation.
-
-## Cognitive condition
-
-The Cognitive condition uses this state flow:
-
-1. Capture the initial answer and relevant background.
-2. Identify the participant’s reasoning, priorities, goal, or uncertainty.
-3. Contribute relevant knowledge, structure, comparison, or a tradeoff.
-4. Refine the answer without taking ownership of it.
-5. Ask exactly once:
-
-   > Before we finalize it, is there anything important we missed or anything
-   > you’d like to reconsider?
-
-6. Leaves: finish after resolving the check. Island: confirm the final three items.
-7. Use the assigned exact closing.
-
-The explicit completeness check applies only to Cognitive tasks. Any useful
-Leaves example or optional rehearsal precedes it. Island retains its final
-three-item confirmation after the check.
-
-### Autumn Leaves
-
-Buzz first listens to the participant’s initial explanation, responds to the
-usable idea, and asks what they want the child to understand or picture, after supplying a missing
-basic concept if needed. Buzz does not force a choice between unfamiliar concepts. If
-the participant does not know or gives a materially inaccurate cause, Buzz adds
-one short, accurate science idea in child-friendly language and asks how they
-might express it to the child when useful. If they are confused, explain more
-simply without immediately demanding teach-back. In the first support response,
-offer a starting concept or clue, not the complete causal chain or finalized
-child-ready answer. After that response, a requested or needed complete example
-is allowed even early; adapt it with the participant. At wrap-up Buzz offers an example or the
-participant's own explanation once, without a mandatory rehearsal. It does not quiz the participant before helping.
-
-The expected final explanation connects why the change happens in autumn with
-the green material's food-making role, reduced replacement/breakdown, and the
-appearance of yellow/orange colors. “Green fades, so other colors show” alone is
-not enough. Buzz supplies missing connections even when the participant offers
-only brief agreements, rather than waiting for repeated “why” questions or
-offering another shorter wording. Seasonal preparation is context for the
-mechanism; color change is not a deliberate decision by the tree to save energy.
-
-Internal scientific reference:
-
-- chlorophyll makes leaves look green and captures sunlight to make food;
-- shorter autumn daylight and cooler conditions signal winter preparation in
-  deciduous trees; leaf food-making activity winds down, chlorophyll production
-  decreases, and existing chlorophyll breaks down;
-- yellow and orange pigments already present in many leaves become visible;
-- some trees produce red or purple anthocyanins;
-- species and conditions influence the resulting colors.
-
-Buzz should not say cold alone causes the change, describe “dying” as the full
-explanation, or claim every autumn color was hidden in the same way.
-
-The science list is background knowledge, not a script. Buzz adds no more than
-one new science idea in a normal support turn. A requested or needed complete
-example or conceptual answer may connect established ideas within 70 words.
-In the first teaching response it does not use
-`chlorophyll`, `pigment`, or `anthocyanin`. A technical term may be introduced
-later only after a simple explanation is established or the participant asks
-for it, and Buzz immediately defines it in everyday language.
-
-Before the last check, Buzz returns explicitly from conceptual questions to
-helping the participant explain to the seven-year-old. It works from their own
-idea and helps refine ordering, understandable words, and causal links.
-“I understand the concept” is not evidence that they have endorsed a child-ready
-explanation. If this application step is still needed, Buzz asks once:
-
-> Would you like me to give an example based on what we've discussed, or would you like to try explaining it as if I were the child?
-
-It waits and follows the chosen path. A bare yes requires a brief clarification.
-An explicit example request is fulfilled without another choice. An already
-supplied/endorsed child explanation needs no extra exercise. Neither path is a
-required performance: declining both is respected without a replacement example
-or required approval. A full rehearsal invitation is not appended to the choice.
-The browser records the choice only after actual, uncancelled playback.
-After the check, answer additional requests, then close; do not open a new rehearsal.
-Questions about the mechanism take priority over rewriting the wording.
-
-### Desert Island
-
-Scenario constants:
-
-- rescue occurs after five days;
-- appropriate clothing and drinking water for the five days are provided;
-- food is not provided, so `Canned beans` remains an allowed choice;
-- the participant must select exactly three items;
-- there is no official ranking or single correct combination.
-
-Fixed item list:
-
-Participants receive this list on paper. The task card does not display the
-item options or their quantities; the agent retains them as internal constraints.
-
+Shared list:
 1. Flashlight
 2. First-aid kit
 3. Rope
@@ -210,206 +46,75 @@ item options or their quantities; the agent retains them as internal constraints
 9. Machete
 10. Shovel
 11. Hatchet
-12. Canned beans
-13. Fishing net
-14. Dog
-15. Cat
-16. Matches
-17. Magnifying glass
-18. Hammock
-19. Sunscreen
-20. Blanket
-21. Family photo
-22. Radio
-23. Toothbrush and toothpaste
+12. Toothbrush and toothpaste (1 set)
+13. Canned beans (5 cans)
+14. Fishing net
+15. Dog
+16. Cat
+17. Matches (1 box)
+18. Tent
+19. Insulated sleeping mat
+20. Sunscreen (1 bottle)
+21. Portable stove with fuel (1 stove with fuel for three days)
+22. Family photo
+23. Metal cooking pot
+24. Bug spray (1 bottle)
 
-Buzz first captures three initial choices. If an item is unclear or does not
-confidently match one canonical item, Buzz asks rather than guessing. It then
-explores why the participant selected the three items and what they are unsure
-about before introducing any critique or alternative. After understanding that
-reasoning, Buzz discusses one useful limitation, overlap, missed tradeoff, or
-alternative at a time and returns the decision to the participant.
+All unspecified quantities are one. Stove/fuel is one entry; the pot is separate.
+The two cards share wording except the setting and title. Both use one minute
+to think and 4–5 minutes to talk with Buzz.
 
-If the participant asks for a recommendation, Buzz gives one or at most two
-relevant options and asks which option, if any, they actually want. Suggested,
-hypothetical, and uncertain items never enter the working set until the
-participant explicitly chooses or substitutes them.
+## Affective tasks
 
-After the Cognitive completeness check and any revision, Buzz says:
+Follow one positive or manageable negative memory from the past ten years.
+Listen without advice, psychological interpretations or forced emotion labels.
+Usually ask three grounded follow-ups, at least two for ordinary completion;
+do not ask redundant questions to fill a quota.
+When appropriate, ask once: “Before we finish, is there anything else you'd
+like to share about that experience?” Receive the answer; no/no more needs only
+a brief Okay. Additional sharing receives a grounded acknowledgment.
 
-> To confirm, your final three items are [A], [B], and [C]. Is that right?
+## Participant-led completion
 
-Buzz reads exactly three canonical item names. It closes only after clear
-confirmation. If the participant revises an item, Buzz restates and reconfirms
-the updated set of three. It does not predict or guarantee survival; it describes
-coverage and limitations under the scenario assumptions.
+Clear contextual wishes to finish this activity override ordinary pacing,
+follow-up counts and ending questions. Use finish with participant_done and
+a brief acknowledgment. Do not ask again whether they are sure or repeatedly
+summarize. “I'm good” after an invitation to say more can mean done; “I'm good”
+describing a feeling does not. Short answers, uncertainty, OK/yes and silence
+alone are not completion. Questions and accepted help are addressed first.
 
-## Affective condition
+Explicit study/session stop, skipping further activities or discomfort use stop
+with participant_stop/discomfort. These never advance automatically.
+participant_done may advance after successful saving; it is logged distinctly
+from completed, especially if final Cognitive choices were not confirmed.
 
-The Affective condition uses this state flow:
+## Timing, playback and saving
 
-1. Understand the basic context of the selected memory.
-2. Follow concrete details the participant introduced, usually with around three
-   substantive follow-ups, with at least two per memory. Opening and final
-   questions, repeats and listening clarifications do not count. Clear refusal
-   or discomfort overrides the minimum even before the target time.
-3. Respond specifically to experiences and feelings they expressed. A meaningful
-   emotional answer usually gets two brief connected sentences recognizing its
-   concrete circumstances and their stated experience. Do not merely echo an
-   emotion label. Listening responses without a new question are also allowed.
-4. At the browser's ending stage, ask once:
+Ordinary target 4–5 minutes; ending window at 3:00, wrap-up around 4:30.
+No fixed overrun cutoff; never interrupt a participant or infer an answer from
+silence. Playback receipts, not generation alone, establish that a question or
+acknowledgment was delivered. A listening repair requires real playback and a
+subsequent participant reply.
 
-   > Before we finish, is there anything else you'd like to share about that experience?
+Cognitive closing: “That completes our conversation. Thank you!”
+Affective closing: “That completes our conversation. Thank you for sharing with me.”
 
-5. Wait for the answer. A bare yes invites further sharing; a repetition or time
-   request is not completion. After additional sharing, acknowledge that content.
-   If there is nothing more, a brief “Okay” is sufficient before the exact
-   closing with thanks for sharing. Do not summarize the memory or require a
-   retrospective reflection after a decline or clarification. Additional sharing
-   still receives its own specific response, not generic thanks or an earlier
-   memory recap. A stop request gets a brief boundary acknowledgment.
-6. Request the controlled closing through the silent `study_progress` tool.
+Normal replies do not speak a farewell. Silent study_progress calls request it.
+The browser validates the stage/evidence, then requests an acknowledgment plus
+the exact closing. Save only after both are heard. Failed saves/closing delivery
+do not advance automatically. Each activity has its own session and files.
 
-Warmth comes from accurate listening, not analysis. Do not require finer emotion
-labels, emotion menus, bodily categories, causes, lessons, or deeper meaning.
-Ask about bodily sensations only when the participant introduced them or a brief
-clarification is genuinely needed. Avoid poetic reframing, moral/character
-judgment, generic reassurance, advice, scheduling, prioritization, and coaching.
-The final sharing invitation differs from the Cognitive completeness check.
-Before it, give the final substantive answer an adequate empathetic response.
-A reflection-only turn may precede the invitation; do not add questions just to
-fill time or ask the participant to choose from suggested feelings.
+Activity 1 closing → save → at least three seconds from closing playback end →
+“Let's move to the next activity.” → 60-second private preparation → Start →
+Activity 2 question. Researcher test mode skips the preparation wait only.
 
-### Positive Memory
+## Participant UI
 
-The participant selects one specific positive event from the past ten years.
-Positive may include joy, pleasure, satisfaction, connection, relief, pride,
-calm, or another positive experience. Buzz does not require intense happiness.
-
-### Negative Memory
-
-The participant selects one specific negative but manageable event from the
-past ten years. If they begin with upcoming tasks or future worries, acknowledge
-briefly and redirect once to a specific moment of that pressure, even earlier
-today. Do not solve the schedule. Buzz does not intensify the event, search for trauma, require a
-lesson, impose a silver lining, or demand resolution.
-An action such as starting work does not establish that they felt better or that
-the difficulty was resolved. Recognize the stated burden without inferring relief,
-recovery, helpful structure, or personal growth.
-
-If the participant becomes uncomfortable, describes severe trauma, or asks to
-skip or stop, Buzz does not probe. It briefly acknowledges the boundary,
-reminds the participant they do not need to continue, and closes if requested.
-
-## Pacing
-
-The browser measures from the first task-opening audio playback to the end of
-the closing audio. Preparation, transition speech and connection setup are excluded.
-
-| Condition | Ending window opens | Converge | Begin wrap-up | Soft target |
-| --- | --- | --- | --- | --- |
-| Cognitive | 3:00 | 3:00 | 4:30 | 5:00 |
-| Affective | 3:00 | 3:00 | 4:30 | 5:00 |
-
-Response batches are diagnostic, not a quota or a proxy for substantive answers.
-A periodic clock updates state; responses wait for speech, transcription and
-playback to settle. From 3:00, the model may ask the last check when ready.
-Around 4:30, the next natural response prepares a wrap-up once required
-exchanges are complete. Affective needs two delivered follow-ups and a reply to
-the latest one. The counter is conservative and cannot prove substantive
-relevance; validate it in piloting. An idle
-pause of at least eight seconds can also trigger that invitation. Silence after
-a final question never counts as an answer. Five minutes never cuts off speech:
-finish the required steps, log overrun time and the state at the soft target.
-There is no fixed overrun cap. Participant additions remain welcome and receive
-a response; Buzz does not initiate new exploratory topics while closing.
-Stop/discomfort requests override the minimum and do not auto-start another task.
-
-Questions and listening complaints take priority over every ending stage.
-The controller places a listening hold for detected questions/corrections;
-`study_progress` action `repair_needed` also allows the model to request one
-without a phrase match. A normal progression call cannot clear this hold.
-An actual repair response must finish playing (not merely be transcribed or
-claimed in a tool call), followed by a later participant reply without another
-detected question/complaint. The model must still judge whether the substance
-is resolved. Silence and an elapsed timer never release the hold. Playback
-proves delivery, not the semantic quality of the answer; live pilots remain
-necessary. Leaves rewrites must preserve the cause of the color change rather
-than substituting decorative metaphors or repeated style choices.
-
-## Exact closing and automatic saving
-
-- Cognitive, either task: **“That completes our conversation. Thank you!”**
-- Affective, either task: **“That completes our conversation. Thank you for sharing with me.”**
-
-The normal model response must not speak a farewell. The silent `study_progress`
-tool requests `check_answered` (Cognitive), `finish`, or `stop`. The browser gates
-these requests by stage, playback receipt, a subsequent participant response and
-the final-question receipt. An unexpectedly early heard check is logged and
-honoured instead of repeating it to fill time. It then requests a separate, exact closing response with a
-required, non-empty grounded acknowledgment (at most 40 words). Invalid or
-empty text is regenerated from the same participant reply without asking them
-to answer again, rather than silently omitted. In Affective, leave thanks to
-the exact closing rather than duplicating it in the acknowledgment.
-The delivered acknowledgment is checked before normal auto-save. Semantic interpretation of the participant's
-answer still depends on the model; the controller also rejects obvious yes-to-
-sharing/rehearsal and repeat/time requests. Live voice pilots remain necessary.
-
-The exact closing must be the final words of the task. Buzz adds no recap,
-invitation, farewell, or question after it. When playback of the exact closing
-stops, the browser mutes the microphone, stops the recording, and saves the
-audio, transcript, and JSON log. There is no post-closing participant farewell
-turn and no “Okay, bye.” response.
-
-## Pilot checks
-
-Review transcripts and event logs for:
-
-- exact first-task introduction and second-task transition order;
-- at least three seconds between first closing playback end and the next
-  transition request, including researcher test mode;
-- a full unrecorded 60-second preparation period before each participant task;
-- researcher test mode skipping the wait only when explicitly enabled and
-  recording that fact in transcript and event metadata;
-- no self-introduction in Activity 2;
-- context collection before task support;
-- gradual, child-friendly Leaves support without a first-turn solution dump,
-  with proactive causal connections for brief or passive answers;
-- optional, non-evaluative Leaves rehearsal;
-- returning to child-explanation building after conceptual questions;
-- a one-time example-or-explain choice with a delivered-playback receipt;
-- no Island item-option list in the UI; exactly three allowed items in the final confirmation;
-- Cognitive-only completeness check;
-- no advice or problem solving in the Affective condition;
-- at least two substantive follow-ups per memory, normally three, with refusal exceptions;
-- specific empathy before the final Affective sharing invitation, participant
-  answer, and grounded acknowledgment of substantive sharing before closing;
-- ordinary endings target the shared 4–5-minute window; early checks are logged;
-- no timeout termination while speaking or awaiting the final answer;
-- plain Affective empathy without unsupported psychological analysis;
-- exact closing detection and automatic save;
-- separate task sessions and filenames containing condition, task, and order
-  position;
-- response requests blocked while speech, transcription, or Buzz audio is in
-  progress;
-- successful cancellation and coalescing when the participant continues before
-  Buzz playback begins.
-
-## v12 pilot fixes
-
-- Short acceptance of a delivered help offer opens a listening hold. The promised
-  response must play before a later participant reply can release that hold.
-  Detection covers common English offers; model instructions also enforce this
-  semantically. This is not a guarantee for every possible paraphrase.
-- Respond to uncertainty before the final check. Routine pause/break suggestions
-  are prohibited unless prompted by a boundary or discomfort.
-- Keep the shared moderately calm delivery across positive and negative tasks.
-  At v12, voice remained marin at speed 0.95. The current v17 uses speed 1.0
-  with common pacing instructions; live audio comparison is still required.
-- Clear playback if continuation is already known when playback starts, with no
-  added delay. Clear-transcript grace stays 0ms; incomplete-fragment grace stays
-  300ms. A continuation detected after playback starts may remain briefly audible.
-- If an authorized closing omits the exact phrase, retry the phrase once after
-  playback. Repeated omission saves an error session without advancing tasks.
-- Earlier pacing policy is superseded by v14: target 4–5 minutes, no fixed overrun cap,
-  and two substantive Affective follow-ups unless the participant declines.
+Buzz → animation → listening/thinking/speaking status → activity card.
+Recording notice follows the 4–5-minute preparation line, same size, left aligned.
+End activity is available only in researcher test mode.
+Back/Return to researcher setup require PIN 7890, including second preparation.
+This is an accidental-click guard. Return uses a quiet text link during conversations
+and on completion. Live return saves the current task before navigation and does
+not advance to task two. The researcher setup displays PIN 7890.
+Listening/thinking/speaking status appears bold in a rounded rectangular chip.

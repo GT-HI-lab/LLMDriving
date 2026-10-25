@@ -1,0 +1,8 @@
+Buzz v18 UI update (based on v17)
+
+- Added a visible countdown to the disabled Start button during the one-minute preparation period for both activities. The button becomes available when preparation ends; researcher test mode still skips the wait.
+- Made Back to researcher setup visible on the second activity preparation screen. Returning closes that preparation session and preserves the saved first-activity results. The button is temporarily disabled while the connection is being established.
+- Kept conversation prompts, voice settings, and response timing unchanged. Long response delays require the corresponding Event_Log to identify the delayed stage.
+
+Install: replace assistant_modes.py and web/app.js together, restart the server, and hard-refresh the browser. The assistant_modes.py change only updates the controller version identifier. Updated controller tests are also included.
+Returning to setup ends the current preparation; it does not pause it for resumption.

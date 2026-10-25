@@ -52,7 +52,7 @@ RECORDING_STEM_PATTERN = re.compile(
     r"^(?P<date>[0-9]{6})_"
     r"(?P<participant>[A-Za-z0-9][A-Za-z0-9_-]{0,63})_"
     r"(?P<mode>cognitive|affective)_"
-    r"(?P<task>leaves|island|positive|negative)_"
+    r"(?P<task>north_pole|leaves|island|positive|negative)_"
     r"T(?P<position>[12])(?:_[0-9]{2,})?$"
 )
 RECORDING_EXTENSIONS = {

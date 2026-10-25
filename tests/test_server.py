@@ -19,8 +19,6 @@ from assistant_modes import (
     CONTROLLER_VERSION,
     DESERT_ISLAND_ITEMS,
     FINALIZATION_ELAPSED_SECONDS,
-    LEAVES_REHEARSAL_QUESTION,
-    LEAVES_WRAPUP_CHOICE_QUESTION,
     MAXIMUM_CONVERSATION_ELAPSED_SECONDS,
     PREPARATION_SECONDS,
     PROMPT_VERSION,
@@ -57,7 +55,7 @@ class ServerTests(unittest.TestCase):
         self,
         participant_id="P001",
         condition="cognitive",
-        task_id="leaves",
+        task_id="north_pole",
         position=1,
     ):
         return {
@@ -80,7 +78,7 @@ class ServerTests(unittest.TestCase):
 
     def test_session_config_uses_shared_voice_and_research_vad(self):
         assignments = (
-            ("cognitive", "leaves"),
+            ("cognitive", "north_pole"),
             ("cognitive", "island"),
             ("affective", "positive"),
             ("affective", "negative"),
@@ -135,51 +133,45 @@ class ServerTests(unittest.TestCase):
                     self.assertIn(closing, payload["instructions"])
 
     def test_prompt_modules_encode_approved_task_behavior(self):
-        leaves = build_instructions("cognitive", "leaves", 1)
-        island = build_instructions("cognitive", "island", 2)
-        positive = build_instructions("affective", "positive", 1)
-        negative = build_instructions("affective", "negative", 2)
+        for task in ("north_pole", "island"):
+            prompt = build_instructions("cognitive", task, 1)
+            self.assertIn(COGNITIVE_COMPLETENESS_CHECK, prompt)
+            self.assertIn("three days", prompt)
+            self.assertIn("food and shelter are not provided", prompt)
+            self.assertIn("rescue team knows", prompt.lower())
+            self.assertIn("A suggestion is never a selection", prompt)
+            self.assertIn("Never silently guess", prompt)
+            self.assertIn("three-item confirmation", prompt)
+            self.assertNotIn("Leaves", prompt)
+            self.assertNotIn("five days", prompt)
+            for item in DESERT_ISLAND_ITEMS:
+                self.assertIn("- " + item, prompt)
+        self.assertEqual(len(DESERT_ISLAND_ITEMS), 24)
+        self.assertEqual(len(set(DESERT_ISLAND_ITEMS)), 24)
+        self.assertIn("Bug spray", DESERT_ISLAND_ITEMS)
+        for removed in ("Magnifying glass", "Hammock", "Blanket", "Radio"):
+            self.assertNotIn(removed, DESERT_ISLAND_ITEMS)
+        for task in ("positive", "negative"):
+            prompt = build_instructions("affective", task, 1)
+            self.assertIn("participant_done", prompt)
+            self.assertIn("even before three minutes", prompt)
+            self.assertIn(AFFECTIVE_FINAL_CHECK, prompt)
+            self.assertNotIn(COGNITIVE_COMPLETENESS_CHECK, prompt)
 
-        self.assertIn(COGNITIVE_COMPLETENESS_CHECK, leaves)
-        self.assertIn(LEAVES_REHEARSAL_QUESTION, leaves)
-        self.assertIn("short, accurate science idea", leaves)
-        self.assertIn("Chlorophyll makes leaves look green", leaves)
-        self.assertIn("anthocyanins", leaves)
-        self.assertIn("Do not quiz them before helping", leaves)
-        self.assertIn('do not use "chlorophyll," "pigment," or', leaves)
-        self.assertIn("Add at most one new science", leaves)
-        self.assertIn("unload the scientific answer", leaves)
-
-        for item in DESERT_ISLAND_ITEMS:
-            self.assertIn("- " + item, island)
-        self.assertEqual(len(DESERT_ISLAND_ITEMS), 23)
-        self.assertIn("must choose exactly", island)
-        self.assertIn('say, "To confirm, your final', island)
-        self.assertIn("Do not invent an item", island)
-        self.assertIn("desert island for five days", island)
-        self.assertIn("clothing and drinking water", island)
-        self.assertIn("food is not provided", island)
-        self.assertIn("remains an allowed choice because food is not provided", island)
-        self.assertIn("A suggestion is never a selection", island)
-        self.assertIn("Never silently guess", island)
-
-        self.assertIn("usually aim for three", positive)
-        self.assertIn(AFFECTIVE_FINAL_CHECK, positive)
-        self.assertIn("study_progress", positive)
-        self.assertIn("four to five minutes", positive)
-        self.assertIn("at least two substantive", positive)
-        self.assertIn("clear refusal", positive)
-        self.assertIn("finalized child-ready answer", leaves)
-        self.assertIn("example is allowed even early", leaves)
-        self.assertIn("For every finish or stop call", positive)
-        self.assertIn("Sound like an attentive conversation partner", positive)
-        self.assertIn("Do not name an abstract theme", positive)
-        self.assertIn("Do not ask the Cognitive completeness question", positive)
-        self.assertNotIn(COGNITIVE_COMPLETENESS_CHECK, positive)
-        self.assertIn("specific positive memory", positive)
-        self.assertIn("negative but manageable memory", negative)
-        self.assertIn("Do not require a lesson, silver lining", negative)
-        self.assertIn("do not probe", negative)
+    def test_survival_cards_differ_only_in_setting(self):
+        config = public_study_config()
+        island = json.dumps(config["tasks"]["island"]["participant_instruction"]["blocks"])
+        north = json.dumps(config["tasks"]["north_pole"]["participant_instruction"]["blocks"])
+        self.assertEqual(north, island.replace(
+            "on a deserted island in a warm environment",
+            "at the North Pole in a cold environment with snow and ice"))
+        self.assertIn("three days", island)
+        self.assertIn("all five cans", island)
+        self.assertNotIn("leaves", config["tasks"])
+        with self.assertRaises(ValueError):
+            build_instructions("cognitive", "leaves", 1)
+        # Old filenames remain recognizable; existing logs are never migrated.
+        self.assertTrue(server.RECORDING_STEM_PATTERN.fullmatch("261025_P001_cognitive_leaves_T1"))
 
     def test_public_config_has_two_conditions_two_orders_and_exact_speech(self):
         config = public_study_config()
@@ -195,7 +187,6 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(config["voice_delivery_instructions"], SHARED_VOICE_DELIVERY_INSTRUCTIONS)
         self.assertEqual(config["transition"], SECOND_TASK_TRANSITION)
         self.assertEqual(config["affective_closing"], AFFECTIVE_CLOSING)
-        self.assertEqual(config["leaves_wrapup_choice_question"], LEAVES_WRAPUP_CHOICE_QUESTION)
         self.assertEqual(
             config["closings"],
             {"task_one": TASK_ONE_CLOSING, "task_two": TASK_TWO_CLOSING},
@@ -204,7 +195,7 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("neutral", config["modes"])
         self.assertEqual(
             [order["tasks"] for order in config["modes"]["cognitive"]["orders"]],
-            [("leaves", "island"), ("island", "leaves")],
+            [("north_pole", "island"), ("island", "north_pole")],
         )
         self.assertEqual(
             [order["tasks"] for order in config["modes"]["affective"]["orders"]],
@@ -222,7 +213,7 @@ class ServerTests(unittest.TestCase):
             config["tasks"]["positive"]["opening_later"],
             "What positive memory would you like to share?",
         )
-        for task_id in ("positive", "negative", "leaves", "island"):
+        for task_id in ("positive", "negative", "north_pole", "island"):
             instruction = config["tasks"][task_id]["participant_instruction"]
             self.assertIsInstance(instruction["blocks"], tuple)
             self.assertTrue(
@@ -247,7 +238,7 @@ class ServerTests(unittest.TestCase):
         island_text = json.dumps(
             config["tasks"]["island"]["participant_instruction"]["blocks"]
         )
-        self.assertIn("five days", island_text)
+        self.assertIn("three days", island_text)
         self.assertIn("clothing and drinking water", island_text)
         self.assertNotIn("Nomi", json.dumps(config))
         public_json = json.dumps(config)
@@ -317,7 +308,7 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(server.assistant_mode_is_valid("neutral"))
         with self.assertRaisesRegex(ValueError, "Unsupported assistant mode"):
             server.build_session_config(
-                self.make_settings(), "neutral", "leaves", 1
+                self.make_settings(), "neutral", "north_pole", 1
             )
         with self.assertRaisesRegex(ValueError, "Unsupported task"):
             server.build_session_config(
@@ -331,7 +322,7 @@ class ServerTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "Task position must be 1 or 2"):
             server.build_session_config(
-                self.make_settings(), "cognitive", "leaves", 3
+                self.make_settings(), "cognitive", "north_pole", 3
             )
 
     def test_html_uses_buzz_two_conditions_and_condition_blind_participant_view(self):
@@ -361,7 +352,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn("activeResearcherTestMode", script)
         self.assertIn("effectivePacingConfig", script)
         self.assertIn("researcher_test_mode", script)
-        self.assertIn('startButton.textContent = "Take a moment to think"', script)
+        self.assertIn('startButton.textContent = "Start in 1:00"', script)
         self.assertIn(
             'startButton.textContent = "Start conversation with Buzz"', script
         )
@@ -412,14 +403,14 @@ class ServerTests(unittest.TestCase):
             self.assertFalse(server.participant_id_is_valid(participant_id))
 
         valid = (
-            "260925_P001_cognitive_leaves_T1",
+            "260925_P001_cognitive_north_pole_T1",
             "260925_study_12_affective_negative_T2_02",
         )
         invalid = (
             "260925_P001",
-            "260925_P001_neutral_leaves_T1",
+            "260925_P001_neutral_north_pole_T1",
             "260925_P001_cognitive_positive_T1",
-            "260925_P001_cognitive_leaves_T3",
+            "260925_P001_cognitive_north_pole_T3",
             "../../escape",
         )
         for stem in valid:
@@ -448,7 +439,7 @@ class ServerTests(unittest.TestCase):
                 audio,
                 "P001",
                 "cognitive",
-                "leaves",
+                "north_pole",
                 1,
                 ".webm",
                 recorded_at,
@@ -456,14 +447,14 @@ class ServerTests(unittest.TestCase):
                 events,
             )
             self.assertEqual(
-                first.name, "260925_P001_cognitive_leaves_T1.webm"
+                first.name, "260925_P001_cognitive_north_pole_T1.webm"
             )
-            (text / "260925_P001_cognitive_leaves_T1.txt").write_text("used")
+            (text / "260925_P001_cognitive_north_pole_T1.txt").write_text("used")
             second = server.next_recording_path(
                 audio,
                 "P001",
                 "cognitive",
-                "leaves",
+                "north_pole",
                 1,
                 ".webm",
                 recorded_at,
@@ -471,7 +462,7 @@ class ServerTests(unittest.TestCase):
                 events,
             )
             self.assertEqual(
-                second.name, "260925_P001_cognitive_leaves_T1_02.webm"
+                second.name, "260925_P001_cognitive_north_pole_T1_02.webm"
             )
 
     def test_store_recording_streams_bytes_and_uses_final_filename(self):
@@ -539,7 +530,7 @@ class ServerTests(unittest.TestCase):
 
     def test_store_event_log_validates_metadata_and_is_idempotent(self):
         payload = json.dumps(self.event_payload(), indent=2).encode("utf-8")
-        stem = "260925_P001_cognitive_leaves_T1"
+        stem = "260925_P001_cognitive_north_pole_T1"
         with tempfile.TemporaryDirectory() as directory:
             event_directory = Path(directory)
             path = server.store_event_log(
@@ -572,7 +563,7 @@ class ServerTests(unittest.TestCase):
                             BytesIO(payload),
                             len(payload),
                             Path(directory),
-                            "260925_P001_cognitive_leaves_T1",
+                            "260925_P001_cognitive_north_pole_T1",
                         )
                     self.assertEqual(list(Path(directory).iterdir()), [])
 

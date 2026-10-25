@@ -9,8 +9,8 @@ from copy import deepcopy
 from typing import Dict
 
 
-PROMPT_VERSION = "pilot-2026-10-11-v17"
-CONTROLLER_VERSION = "turn-control-2026-10-11-v18"
+PROMPT_VERSION = "pilot-2026-10-25-v18"
+CONTROLLER_VERSION = "turn-control-2026-10-25-v20"
 SHARED_ASSISTANT_NAME = "Buzz"
 SHARED_VOICE = "marin"
 SHARED_SPEED = 1.0
@@ -43,14 +43,6 @@ COGNITIVE_COMPLETENESS_CHECK = (
     "Before we finalize it, is there anything important we missed or anything "
     "you'd like to reconsider?"
 )
-LEAVES_REHEARSAL_QUESTION = (
-    "Would you like to try saying your final explanation in one or two sentences, as if you were "
-    "speaking to the child?"
-)
-LEAVES_WRAPUP_CHOICE_QUESTION = (
-    "Would you like me to give an example based on what we've discussed, or "
-    "would you like to try explaining it as if I were the child?"
-)
 AFFECTIVE_FINAL_CHECK = "Before we finish, is there anything else you'd like to share about that experience?"
 TASK_ONE_CLOSING = "That completes our conversation. Thank you!"
 TASK_TWO_CLOSING = TASK_ONE_CLOSING
@@ -74,18 +66,21 @@ DESERT_ISLAND_ITEMS = (
     "Dog",
     "Cat",
     "Matches",
-    "Magnifying glass",
-    "Hammock",
+    "Tent",
+    "Insulated sleeping mat",
     "Sunscreen",
-    "Blanket",
+    "Portable stove with fuel",
     "Family photo",
-    "Radio",
+    "Metal cooking pot",
+    "Bug spray",
 )
 
 DESERT_ISLAND_QUANTITIES = {
     "Canned beans": "5 cans",
     "Matches": "1 box",
     "Sunscreen": "1 bottle",
+    "Bug spray": "1 bottle",
+    "Portable stove with fuel": "1 stove with fuel for three days",
     "Toothbrush and toothpaste": "1 set",
 }
 
@@ -132,12 +127,11 @@ study design.
   or process announcement.
 - Ask at most one main question in a turn.
 - Ordinary turns are one to three short sentences, usually 15-40 spoken words.
-- A brief scientific explanation in the Leaves task may use up to 70 words.
 - Do not ask for a fact they have already supplied or reopen a resolved choice.
 - Respond to the participant's latest words without repeatedly paraphrasing
   everything they said.
 - Do not use a list in speech unless the task requires reading the participant's
-  final three island items.
+  final three survival items.
 
 # Context before support
 
@@ -230,6 +224,25 @@ they cannot comfortably continue. Never use stop for task difficulty, a short an
 selected memory, "nothing else" at the final check, or simply reaching the time
 limit. Repetition requests and requests for time are not completed answers.
 
+
+# Participant-led completion
+A clear contextual statement that the participant has nothing more to share
+or wants to finish this activity overrides the usual duration and follow-up
+minimums. Do not repeat the final invitation, recap, or ask whether they are
+sure. In Affective, call finish with reason participant_done and acknowledgment
+"Okay" immediately, even before three minutes or before the final invitation.
+Interpret "I'm good" in context: after an invitation to say more it can mean
+done; while describing a feeling it is not a completion request.
+Never infer completion from silence, "OK", "yes", "not much", uncertainty, or
+a short answer alone. A question or accepted help offer still needs a response.
+For Cognitive, respect an explicit wish to finish the activity using the same
+participant_done reason; do not force a final selection. The log distinguishes
+this participant-led ending from a completed three-item confirmation.
+participant_done ends only the current activity and permits the usual next
+activity. An explicit wish to stop the study/session, skip further activities,
+or discomfort uses stop with participant_stop/discomfort and must not auto-start
+the next activity. Never treat a wish to finish the whole study as participant_done.
+
 # Boundaries
 
 - Do not claim there is one officially correct personal choice or explanation.
@@ -251,11 +264,9 @@ answer.
 2. Identify their goal, reasoning, priorities, or uncertainty.
 3. Contribute task-relevant knowledge, a distinction, or a tradeoff.
 4. Help refine the answer in language the participant endorses.
-5. After useful refinement, including applying the Leaves explanation to the
-   child unless the participant declines, ask exactly once: "{COGNITIVE_COMPLETENESS_CHECK}"
-6. For Leaves, after resolving that check call finish; no further rehearsal is
-   required. For Island, call check_answered, then complete the browser-requested
-   three-item confirmation before calling finish.
+5. After useful refinement, ask exactly once: "{COGNITIVE_COMPLETENESS_CHECK}"
+6. For both survival tasks, call check_answered after resolving that check, then
+   complete the browser-requested three-item confirmation before calling finish.
 
 # Cognitive interaction rules
 
@@ -300,7 +311,7 @@ questions.
    wait for the participant, then invite additional sharing when appropriate.
    If you have already responded adequately, do not repeat the same reflection.
    Do not insert a summary of the memory as an ending step.
-   At the browser's ending stage, ask exactly once: "{AFFECTIVE_FINAL_CHECK}"
+   Unless the participant has clearly said they are done, at the browser's ending stage, ask exactly once: "{AFFECTIVE_FINAL_CHECK}"
 5. Wait for their answer. If they share more, listen, then use study_progress
    action finish with one short acknowledgment grounded in that additional
    content. Additional sharing may continue beyond the target time; do not infer
@@ -393,146 +404,16 @@ skip or stop, do not probe. Use the controlled stop path when appropriate.
 """.strip()
 
 
-LEAVES_INSTRUCTIONS = f"""
-# Leaves task
-
-The participant is developing an accurate, child-friendly answer to a
-seven-year-old's question: "Why do leaves change color in autumn?"
-
-# Authoritative science for this task
-
-- Chlorophyll makes leaves look green and helps capture sunlight so the tree
-  can make food.
-- Shorter daylight and cooler autumn conditions signal seasonal changes in
-  deciduous trees as winter approaches. Food-making activity in their leaves
-  winds down, less chlorophyll is produced/replaced, and existing chlorophyll
-  breaks down.
-- Yellow and orange pigments that were already in many leaves then become
-  visible.
-- Some trees also produce red or purple pigments called anthocyanins.
-- Different tree species and conditions produce different colors.
-- Deciduous trees also recover useful nutrients from their leaves before
-  shedding them for winter. This can explain the participant's "getting ready
-  for winter" idea when relevant; it is not a claim that the tree chooses to
-  change color or that color change itself saves energy.
-
-Use only the amount of science needed. Do not say that cold alone causes the
-change, that leaves are "dying" as the full explanation, or that every color was
-hidden in exactly the same way. Treat these facts as background knowledge, not
-as a list to recite to the participant.
-
-# Expected explanatory depth
-
-This is an explanation-building task, not a one-fact recall task. "The green
-fades and other colors show" describes part of the mechanism, but by itself
-does not explain why the change happens in autumn. Before treating an answer as
-sufficient, help connect the seasonal change, the green material's food-making
-role, its reduced replacement/breakdown, and the resulting visible colors in
-one coherent explanation. A child-friendly answer needs those useful links,
-not biochemical detail, every possible leaf color, or technical vocabulary.
-
-Do not rely on the participant to request each missing link. If they give short
-answers or agreements, proactively contribute the next missing causal link
-instead of repeating the same fact, declaring it sufficient, or offering another
-shorter wording. A brief "okay" is not evidence that an incomplete explanation
-has become complete. Depth comes from clearer connections, not extra turns.
-
-# Leaves conversation flow
-
-1. Listen to the participant's initial explanation before evaluating it.
-2. First respond to the usable idea. In the first support response after their
-   initial answer, do not give a finalized child-ready answer or compress the
-   whole causal chain into one or two sentences, even if they say "I don't know."
-   Offer one starting concept or clue and help them build from it. For a novice,
-   a useful starting point is that a green material helps leaves use sunlight
-   to make food for the tree. Do not append the color-change solution to that
-   starting clue. If they already supplied this concept, work from their next
-   missing link instead of reteaching it. If a basic concept is missing, explain
-   it briefly before asking how they want to present it. Do not force a choice
-   between scientific ideas they have not understood. Do not unload the scientific answer.
-3. If they say they do not know or give a materially inaccurate cause, add one
-   short, accurate science idea in child-friendly language. For example, explain
-   that a green material helps the leaf use sunlight to make food and makes it
-   look green; this is a starting concept, not the complete answer to why autumn
-   colors change. Then build on
-   what they understand or want the child to understand. Do not quiz them before helping.
-   If they do not understand, give a shorter explanation or one concrete example;
-   do not immediately demand that they repeat it in their own words. Let them ask or
-   organize their thoughts. After the first support response, a concise complete
-   example is allowed even early if requested or if they remain stuck. Treat it
-   as a possible explanation, then help them adapt it or choose useful wording.
-   Do not withhold useful help just to prolong the conversation.
-4. Develop the missing links across useful exchanges: what the green material
-   does; how shorter daylight/cooler conditions signal winter preparation and
-   changing leaf activity; why less replacement plus breakdown reduces the
-   green; and how that reveals yellow/orange already present. Connect each new
-   link to what they already understand rather than presenting isolated facts.
-   Preserve that causal backbone in every proposed final or playful version.
-   Red/purple can be newly produced; do not group all reds with hidden colors. Use simple words
-   without replacing the mechanism with "paint", costumes, or just "slowing down".
-   Establish what causes the color change, then help apply it to the child's
-   question. Optional formatting or tone choices must not replace this step.
-   Do not repeatedly offer tone menus. If they say a version does not work, ask
-   what is missing or address their stated concern before rewriting it.
-   Build the explanation together across turns. Add at most one new science
-   idea in a normal support turn; a requested/needed complete example or answer
-   to a conceptual question may connect several established ideas within the
-   70-word explanation allowance. Preserve useful participant wording and let
-   them decide the final language. Ask one focused guiding question when useful;
-   do not demand a restatement after each fact. If they are passive or stuck,
-   supply the missing link and help them combine it with their own starting idea.
-5. Once their conceptual questions are answered, return explicitly to explaining
-   it to the seven-year-old before the final completeness check. Conceptual
-   understanding alone does not complete the explanation-building task.
-   "I understand the concept" reports understanding; it does not mean they have
-   chosen a child-ready explanation or are satisfied with one.
-   Work from their own starting explanation. At this wrap-up point, offer the
-   two paths once, before giving an unsolicited final example, by asking exactly:
-   "{LEAVES_WRAPUP_CHOICE_QUESTION}"
-   Wait for their choice. If they choose an example, give a concise version
-   based on the ideas already discussed and invite them to keep or change a
-   phrase when useful. If they choose to explain, wait for their explanation,
-   then respond to their words and help refine order, child-understandable
-   language, or causal links if needed. Do not immediately provide your own
-   example after they choose to explain. A bare yes does not distinguish the
-   two paths; briefly clarify which they prefer instead of choosing for them.
-   If they already requested an example, fulfil that request without making
-   them choose again. A child-ready explanation they already supplied or
-   explicitly endorsed can satisfy this step without another exercise.
-   This is cooperative explanation-building, not a knowledge quiz or mandatory
-   performance. The standalone full-rehearsal invitation remains optional:
-   "{LEAVES_REHEARSAL_QUESTION}". Do not append it after the two-path choice.
-   If they decline either path or want to move on, respect that and proceed
-   without requiring a replacement example or approval. Do not repeat the
-   choice routinely, offer menus of styles, or demand a restatement of each fact.
-   Repeat the choice if they explicitly ask to hear it again.
-6. Answer conceptual "why" questions before polishing wording. Identify the
-   missing causal link instead of repeating the same explanation more briefly.
-   Never defend a missing cause by saying the concept is unimportant for a child.
-   Simple language should preserve the reason, not remove it.
-   If it is unclear what they missed, ask one focused clarification.
-7. At the browser ending stage, ask the exact Cognitive completeness check.
-   Answer any added question or accepted help request. Then request finish once
-   resolved. Never automatically add a rehearsal after this last check.
-
-Do not make the rehearsal sound like a test or require technical vocabulary.
-In the first teaching response, do not use "chlorophyll," "pigment," or
-"anthocyanin." Use a technical term later only if the participant asks for it,
-uses it first, or it would clearly improve accuracy after a simple explanation
-has already been established. Define it immediately in everyday language and
-introduce no more than one technical term in a turn.
-""".strip()
-
-\
 ISLAND_ITEM_TEXT = "\n".join(
     "- " + item for item in DESERT_ISLAND_ITEM_OPTIONS
 )
 ISLAND_INSTRUCTIONS = f"""
-# Desert Island task
+# Deserted Island task
 
-Scenario: The participant will be stranded on a desert island for five days
-until rescue. Appropriate clothing and drinking water for the five days are
-already provided; food is not provided. The participant must choose exactly
+Scenario: The participant will be stranded on a deserted island in a warm
+environment for three days until rescue. The rescue team knows their location
+and will arrive after three days. Appropriate clothing and drinking water for
+the three days are already provided; food and shelter are not provided. The participant must choose exactly
 three items from the fixed list below.
 
 # Allowed item list
@@ -543,7 +424,7 @@ The listed quantities are fixed; do not assume additional supplies.
 
 {ISLAND_ITEM_TEXT}
 
-# Desert Island conversation flow
+# Deserted Island conversation flow
 
 1. Capture the participant's initial three choices. If a spoken item is unclear,
    does not confidently match one canonical list item, or could match multiple
@@ -569,36 +450,52 @@ The listed quantities are fixed; do not assume additional supplies.
 8. Request action finish only after the participant clearly confirms those three. If they
    change an item, restate the updated set of exactly three and confirm again.
 
-# Desert Island constraints
+# Deserted Island constraints
 
 - Do not invent an item or accept an item outside the fixed list.
 - Do not claim an official ranking or a single correct combination.
 - Do not recommend water or clothing; those are already provided. Canned beans
-  remains an allowed choice because food is not provided.
+  remains an allowed choice because food and shelter are not provided.
 - Do not treat "maybe," "I am considering," a question, or an item suggested by
   Buzz as a decision. Update the working set only after the participant clearly
   chooses, keeps, removes, or replaces an item.
 - Keep the final decision with the participant.
+- Tent provides shelter; an insulated sleeping mat provides ground insulation;
+  a sleeping bag provides body insulation. Do not imply they are interchangeable.
+- Portable stove with fuel is one choice; Metal cooking pot is a separate choice.
+  Canned beans means five cans even though the scenario lasts three days.
+- Bug spray is the canonical name for insect repellent. Confirm ambiguous item
+  references, but recognize an unambiguous everyday synonym.
+- Rescue already knows the location. Do not invent a requirement to find rescue
+  or contact it, or promise that a selected item changes the rescue schedule.
+- Do not invent weather changes, supplied food, or supplied shelter.
 - Do not predict or guarantee survival. If asked, explain what the choices cover
   and their limitations under the scenario assumptions, without outcome assurance.
 """.strip()
 
+# Both tasks share one protocol and item list; only the setting differs.
+NORTH_POLE_INSTRUCTIONS = ISLAND_INSTRUCTIONS.replace(
+    "Deserted Island", "North Pole"
+).replace(
+    "on a deserted island in a warm\nenvironment",
+    "at the North Pole in a cold environment with snow and ice",
+)
 
 ASSISTANT_MODES: Dict[str, Dict[str, object]] = {
     "cognitive": {
         "label": "Cognitive",
         "instructions": COGNITIVE_INSTRUCTIONS,
-        "tasks": ("leaves", "island"),
+        "tasks": ("north_pole", "island"),
         "orders": (
             {
-                "id": "leaves_island",
-                "label": "Leaves → Desert Island",
-                "tasks": ("leaves", "island"),
+                "id": "north_pole_island",
+                "label": "North Pole → Deserted Island",
+                "tasks": ("north_pole", "island"),
             },
             {
-                "id": "island_leaves",
-                "label": "Desert Island → Leaves",
-                "tasks": ("island", "leaves"),
+                "id": "island_north_pole",
+                "label": "Deserted Island → North Pole",
+                "tasks": ("island", "north_pole"),
             },
         ),
     },
@@ -740,93 +637,8 @@ TASKS: Dict[str, Dict[str, object]] = {
             ),
         },
     },
-    "leaves": {
-        "label": "Autumn Leaves",
-        "condition": "cognitive",
-        "opening_first": (
-            "Hello, I'm Buzz. How would you explain why leaves change color "
-            "in autumn to a seven-year-old?"
-        ),
-        "opening_later": (
-            "How would you explain why leaves change color in autumn to a "
-            "seven-year-old?"
-        ),
-        "instructions": LEAVES_INSTRUCTIONS,
-        "participant_instruction": {
-            "title": "Explain Autumn Leaves to a Child",
-            "blocks": (
-                {
-                    "type": "paragraph",
-                    "segments": ({"text": "A seven-year-old child asks:"},),
-                },
-                {
-                    "type": "question",
-                    "segments": (
-                        {
-                            "text": "“Why do leaves change color in autumn?”",
-                            "bold": True,
-                        },
-                    ),
-                },
-                {
-                    "type": "paragraph",
-                    "segments": (
-                        {"text": "Think about how you would "},
-                        {"text": "explain this to the child", "bold": True},
-                        {
-                            "text": (
-                                ". Then share your initial approach and explore "
-                                "different ways of explaining it with Buzz."
-                            )
-                        },
-                    ),
-                },
-                {"type": "label", "text": "Use these questions if helpful:"},
-                {
-                    "type": "list",
-                    "items": (
-                        "Why leaves change color?",
-                        "What should the child understand?",
-                        "What simple words or examples could you use?",
-                        (
-                            "How could you make the explanation both accurate "
-                            "and easy to understand?"
-                        ),
-                    ),
-                },
-                {
-                    "type": "paragraph",
-                    "preparation_only": True,
-                    "segments": (
-                        {"text": "There is "},
-                        {"text": "no single correct way to explain it", "bold": True},
-                        {
-                            "text": (
-                                ". You and Buzz can explore different approaches, "
-                                "and you will decide on the final explanation."
-                            )
-                        },
-                    ),
-                },
-                {
-                    "type": "timing",
-                    "segments": (
-                        {"text": "1 minute", "bold": True},
-                        {"text": " to think"},
-                    ),
-                },
-                {
-                    "type": "timing",
-                    "segments": (
-                        {"text": "4–5 minutes", "bold": True},
-                        {"text": " to talk with Buzz"},
-                    ),
-                },
-            ),
-        },
-    },
     "island": {
-        "label": "Desert Island",
+        "label": "Deserted Island",
         "condition": "cognitive",
         "opening_first": (
             "Hello, I'm Buzz. Which three items did you choose for the island?"
@@ -834,7 +646,7 @@ TASKS: Dict[str, Dict[str, object]] = {
         "opening_later": "Which three items did you choose for the island?",
         "instructions": ISLAND_INSTRUCTIONS,
         "participant_instruction": {
-            "title": "Choose Three Desert-Island Items",
+            "title": "Choose Three Items for a Deserted Island",
             "blocks": (
                 {
                     "type": "paragraph",
@@ -842,15 +654,16 @@ TASKS: Dict[str, Dict[str, object]] = {
                         {"text": "Imagine that you are "},
                         {
                             "text": (
-                                "stranded on a deserted island and need to survive"
+                                "stranded on a deserted island in a warm environment"
                             ),
                             "bold": True,
                         },
                         {
                             "text": (
-                                " there for five days until rescue arrives. You "
-                                "already have appropriate clothing and drinking "
-                                "water for the five days."
+                                ". The rescue team knows your location and will arrive "
+                                "in three days. You already have appropriate clothing "
+                                "and drinking water for the three days. "
+                                "Food and shelter are not provided."
                             )
                         },
                     ),
@@ -927,6 +740,24 @@ TASKS: Dict[str, Dict[str, object]] = {
         },
     },
 }
+
+
+# Copy the approved card, preserving wording, emphasis, quantities and timing.
+TASKS["north_pole"] = deepcopy(TASKS["island"])
+TASKS["north_pole"].update(
+    label="North Pole",
+    opening_first="Hello, I'm Buzz. Which three items did you choose for the North Pole?",
+    opening_later="Which three items did you choose for the North Pole?",
+    instructions=NORTH_POLE_INSTRUCTIONS,
+)
+TASKS["north_pole"]["participant_instruction"]["title"] = "Choose Three Items for the North Pole"
+for block in TASKS["north_pole"]["participant_instruction"]["blocks"]:
+    for segment in block.get("segments", ()):
+        segment["text"] = segment["text"].replace(
+            "on a deserted island in a warm environment",
+            "at the North Pole in a cold environment with snow and ice",
+        )
+
 
 
 def assistant_mode_is_valid(assistant_mode: str) -> bool:
@@ -1039,8 +870,6 @@ def public_study_config() -> Dict[str, object]:
             "minimum": AFFECTIVE_MINIMUM_FOLLOWUPS,
             "target": AFFECTIVE_TARGET_FOLLOWUPS,
         },
-        "leaves_rehearsal_question": LEAVES_REHEARSAL_QUESTION,
-        "leaves_wrapup_choice_question": LEAVES_WRAPUP_CHOICE_QUESTION,
         "turn_detection": {
             "type": GLOBAL_REALTIME_SETTINGS["turn_detection_type"],
             "eagerness": GLOBAL_REALTIME_SETTINGS["turn_detection_eagerness"],

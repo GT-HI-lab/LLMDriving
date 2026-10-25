@@ -1,0 +1,31 @@
+Buzz v20.1 — October 25, 2026
+
+UI follow-up to v20:
+- Bold listening/thinking/speaking status in a rounded rectangular chip.
+- Quiet text return link in participant and researcher-test conversations and
+  on completion, protected by the existing PIN. Active conversations save and
+  close before returning to setup; this does not advance to the second task.
+- Display return PIN 7890 on the researcher setup screen.
+
+Previous v20 release:
+
+Baseline: Git 4b9d4fe plus existing local v19 preparation/back-navigation changes.
+Prompt version: pilot-2026-10-25-v18
+Controller version: turn-control-2026-10-25-v20
+
+- Replaced Autumn Leaves with North Pole (task ID north_pole and matching order IDs).
+- Both Cognitive tasks use three days, known rescue location, supplied clothing
+  and drinking water, no supplied food or shelter. Warm island vs cold snow/ice.
+- Shared 24-item list: replace Magnifying glass/Tent, Hammock/Insulated sleeping mat,
+  Blanket/Portable stove with fuel, Radio/Metal cooking pot; add Bug spray.
+  Five cans of beans remain five cans; stove includes fuel, pot is a separate choice.
+- Both survival tasks require final three-item confirmation for ordinary completion.
+- Removed participant End activity; researcher test mode retains manual ending.
+- Moved voice animation below Buzz and added actual listening/thinking/speaking states.
+- Placed recording notice below timing guidance, same size, left aligned.
+- Added PIN 7890 to preparation and completion return paths; muted return style.
+- Added contextual participant_done ending before the three-minute floor, without
+  repeated invitations or recaps; full study stops do not auto-advance.
+- Preserved preparation countdown, second-preparation cleanup, three-second transition
+  gap, playback barriers, save safeguards, original logs and environment settings.
+- Archived superseded documentation and synchronized current version records.
