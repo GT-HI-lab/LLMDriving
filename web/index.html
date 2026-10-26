@@ -2,71 +2,203 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>OpenAI Voice Assistant Demo</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Buzz Voice Study</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main>
-      <h1>OpenAI Voice Assistant Demo</h1>
-      <p id="status" role="status">Not connected.</p>
+    <main class="app-shell">
+      <section id="researcherView" class="view" aria-labelledby="setupHeading">
+        <header class="page-header">
+          <p class="eyebrow">Buzz voice study</p>
+          <h1 id="setupHeading">Researcher setup</h1>
+          <p class="lede">
+            Select the assigned condition and counterbalanced task order, then
+            hand the participant this device.
+          </p>
+        </header>
 
-      <div class="field">
-        <label for="participantId">Participant ID</label>
-        <input
-          id="participantId"
-          name="participantId"
-          type="text"
-          inputmode="text"
-          autocomplete="off"
-          maxlength="64"
-          pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}"
-          aria-describedby="participantIdHint"
-          required
-        />
-        <p id="participantIdHint" class="hint">
-          Use 1-64 letters, numbers, underscores, or hyphens.
-        </p>
-      </div>
+        <section class="panel setup-panel" aria-label="Study configuration">
+          <div class="field">
+            <label for="participantId">Participant ID</label>
+            <input
+              id="participantId"
+              name="participantId"
+              type="text"
+              inputmode="text"
+              autocomplete="off"
+              maxlength="64"
+              pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}"
+              aria-describedby="participantIdHint"
+              placeholder="e.g., P001"
+              required
+            />
+            <p id="participantIdHint" class="hint">
+              1–64 English letters, numbers, underscores, or hyphens.
+            </p>
+          </div>
 
-      <fieldset id="assistantModeFieldset">
-        <legend>Assistant Mode</legend>
-        <label class="mode-option">
-          <input type="radio" name="assistantMode" value="cognitive" />
-          <span><strong>Cognitive</strong> — direct knowledge and logical support from Logan</span>
-        </label>
-        <label class="mode-option">
-          <input type="radio" name="assistantMode" value="neutral" checked />
-          <span><strong>Neutral</strong> — balanced default assistance from Nomi</span>
-        </label>
-        <label class="mode-option">
-          <input type="radio" name="assistantMode" value="affective" />
-          <span><strong>Affective</strong> — warm emotional support from Sunny</span>
-        </label>
-      </fieldset>
+          <fieldset id="assistantModeFieldset">
+            <legend>Assigned condition</legend>
+            <div class="choice-grid two-column">
+              <label class="choice-card">
+                <input type="radio" name="assistantMode" value="cognitive" checked />
+                <span><strong>Cognitive</strong></span>
+              </label>
+              <label class="choice-card">
+                <input type="radio" name="assistantMode" value="affective" />
+                <span><strong>Affective</strong></span>
+              </label>
+            </div>
+          </fieldset>
 
-      <div class="actions">
-        <button id="startButton" type="button">Start Conversation</button>
-        <button id="stopButton" type="button" disabled>End Conversation</button>
-      </div>
+          <fieldset id="taskOrderFieldset">
+            <legend>Task order</legend>
+            <div class="choice-grid two-column">
+              <label class="choice-card">
+                <input type="radio" name="taskOrder" value="order_1" checked />
+                <span><strong id="orderOneLabel">North Pole → Deserted Island</strong></span>
+              </label>
+              <label class="choice-card">
+                <input type="radio" name="taskOrder" value="order_2" />
+                <span><strong id="orderTwoLabel">Deserted Island → North Pole</strong></span>
+              </label>
+            </div>
+          </fieldset>
 
-      <p class="hint">
-        Starting a conversation records both the participant and assistant. Confirm
-        participant consent before starting, and use End Conversation to save the audio
-        recording and text log.
-      </p>
-      <p id="recordingStatus" role="status">Recording has not started.</p>
+          <label class="test-mode-control" for="researcherTestMode">
+            <input id="researcherTestMode" type="checkbox" />
+            <span>
+              <strong>Researcher test mode</strong>
+              <small>Skip the one-minute preparation wait for testing only.</small>
+            </span>
+          </label>
 
-      <section aria-labelledby="transcriptHeading">
-        <h2 id="transcriptHeading">Conversation Transcript</h2>
-        <div id="transcript" aria-live="polite"></div>
+          <p class="hint researcher-pin-note">
+            Researcher return PIN: <strong>7890</strong>. Use the “Return to researcher setup” link to return during an activity.
+          </p>
+
+          <div class="actions">
+            <button id="prepareButton" class="primary" type="button" disabled>
+              Loading study configuration…
+            </button>
+          </div>
+          <p id="setupStatus" class="inline-status" role="status">
+            Loading local study configuration.
+          </p>
+        </section>
+
+        <section id="researcherResults" class="panel results-panel" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Most recent participant</p>
+              <h2>Saved study files</h2>
+            </div>
+            <p id="savedFilesSummary" class="save-pill"></p>
+          </div>
+
+          <div class="diagnostic-grid">
+            <details open>
+              <summary>Most recent task transcript</summary>
+              <div id="transcript"></div>
+            </details>
+            <details>
+              <summary>Most recent task connection log</summary>
+              <pre id="eventLog"></pre>
+            </details>
+          </div>
+        </section>
       </section>
 
-      <details>
-        <summary>Connection Log</summary>
-        <pre id="eventLog"></pre>
-      </details>
+      <section
+        id="participantInstructionView"
+        class="view participant-view"
+        aria-labelledby="participantInstructionHeading"
+        hidden
+      >
+        <div class="participant-card">
+          <div id="preparationOrb" class="voice-orb static-orb idle" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <p class="participant-name">Buzz</p>
+          <p id="taskProgress" class="eyebrow participant-eyebrow"></p>
+          <h1 id="participantInstructionHeading"></h1>
+          <div class="participant-copy">
+            <div id="participantInstructionBody"></div>
+            <p class="recording-notice">Your conversation with Buzz will be recorded for this study.</p>
+          </div>
+          <p id="preparationStatus" class="preparation-status" role="status">
+            Take one minute to think before you begin.
+          </p>
+          <button
+            id="startButton"
+            class="primary participant-action"
+            type="button"
+            disabled
+          >
+            Take a moment to think
+          </button>
+          <button id="backButton" class="text-button" type="button">
+            Back to researcher setup
+          </button>
+        </div>
+      </section>
 
+      <section
+        id="conversationView"
+        class="view participant-view"
+        aria-labelledby="conversationHeading"
+        hidden
+      >
+        <div class="conversation-card">
+          <p class="eyebrow participant-eyebrow">Conversation with</p>
+          <h1 id="conversationHeading">Buzz</h1>
+          <div id="voiceOrb" class="voice-orb idle" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <p id="voiceState" class="voice-state" role="status" aria-live="polite" hidden></p>
+
+          <section
+            id="conversationInstruction"
+            class="conversation-instruction"
+            aria-labelledby="conversationInstructionHeading"
+          >
+            <p id="conversationTaskProgress" class="eyebrow participant-eyebrow"></p>
+            <h2 id="conversationInstructionHeading"></h2>
+            <div id="conversationInstructionBody" class="participant-copy"></div>
+          </section>
+
+          <p id="status" class="conversation-status" role="status" hidden></p>
+          <p id="recordingStatus" class="recording-state" hidden></p>
+
+          <div class="conversation-actions">
+            <button id="stopButton" class="end-button" type="button" hidden disabled>
+              End activity
+            </button>
+            <button id="returnButton" class="text-button" type="button" hidden>
+              Return to researcher setup
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <dialog id="researcherPinDialog" aria-labelledby="researcherPinHeading">
+        <form id="researcherPinForm">
+          <h2 id="researcherPinHeading">Researcher access</h2>
+          <label for="researcherPin">Enter researcher PIN</label>
+          <input id="researcherPin" type="password" inputmode="numeric"
+                 pattern="[0-9]{4}" maxlength="4" autocomplete="off" required />
+          <p id="researcherPinError" role="alert"></p>
+          <div class="pin-actions">
+            <button id="researcherPinCancel" type="button" class="text-button">Cancel</button>
+            <button type="submit" class="end-button">Return to setup</button>
+          </div>
+        </form>
+      </dialog>
       <audio id="remoteAudio" autoplay playsinline></audio>
     </main>
 

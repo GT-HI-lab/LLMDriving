@@ -1,166 +1,133 @@
-# OpenAI Realtime Local Voice Assistant Demo
+# Buzz Realtime Voice Study
 
-This project is a minimal local voice assistant built with the OpenAI Realtime API. The browser captures microphone audio and uses WebRTC for low-latency speech-to-speech conversation. The permanent OpenAI API key stays in the local Python server and is never included in browser code or sent to the iPad.
+Current release: **v20.1**, October 25, 2026.
+Prompt: `pilot-2026-10-25-v18`; controller: `turn-control-2026-10-25-v20`.
 
-The application also records the complete mixed conversation (participant and assistant) and saves both its audio and ordered, per-utterance timestamped text transcript locally after the user selects **End Conversation**. Three mutually exclusive assistant modes provide cognitive, neutral, or affective support. The model behavior profiles are maintained in `assistant_modes.py`.
+## Run
 
-## Requirements
+Use the existing `.env` and start `python3 server.py`. The default local URL is
+http://127.0.0.1:8000. Restart the server and hard-refresh all participant
+browsers after installing this release. Do not replace the existing API key,
+recordings, transcripts or event logs. See `.env.example` for settings.
+An iPad requires the existing trusted HTTPS setup; localhost HTTP is for the
+same computer only.
 
-- Python 3.8 or later
-- A current browser with WebRTC, Web Audio, and MediaRecorder support
-- An OpenAI API key with access to the configured Realtime model
-- Participant consent before recording
+Python 3.8+ and a browser supporting WebRTC, Web Audio, MediaRecorder and HTML
+dialog are required. Voice remains marin, speed 1.0, English output, low reasoning
+effort and semantic VAD. This release does not change the Realtime model.
 
-The project has no third-party Python dependencies.
+## Researcher workflow
 
-## Start the application
+Enter a participant ID, choose Cognitive or Affective, and choose task order.
 
-1. Open `.env` in the project root.
-2. Replace `YOUR_OPENAI_API_KEY_HERE` with the real OpenAI API key and save the file.
-3. Start the server:
-
-   ```bash
-   python3 server.py
-   ```
-
-4. Open <http://127.0.0.1:8000> on the computer running the server.
-5. Enter a Participant ID. It must contain 1-64 letters, numbers, underscores, or hyphens, and must begin with a letter or number.
-6. Select exactly one assistant mode: **Cognitive**, **Neutral**, or **Affective**.
-7. Select **Start Conversation** and allow microphone access. The selected assistant speaks first; begin speaking after its opening message.
-8. Select **End Conversation** when finished. Wait until the page confirms that both conversation files were saved before closing or reloading the page.
-
-Stop the server with `Ctrl+C`.
-
-## Health check
-
-```bash
-curl http://127.0.0.1:8000/health
-```
-
-`api_key_configured` should be `true`. The health response never includes the API key.
-
-## Conversation files
-
-The browser mixes the microphone and assistant audio into one compressed audio file. The server saves the result in `Audio_Record` using this pattern:
-
-```text
-YYMMDD_ParticipantID.ext
-```
-
-Examples:
-
-```text
-260721_P001.webm
-260721_P002.m4a
-```
-
-The extension depends on browser support: Chromium-based browsers normally produce WebM, while Safari normally produces MP4 audio (`.m4a`). If the same Participant ID records more than once on the same date, the server adds `_02`, `_03`, and so on instead of overwriting an existing file.
-
-The server saves the corresponding ordered text transcript in `Txt_Log` with the exact same basename:
-
-```text
-Audio_Record/260721_P001.webm
-Txt_Log/260721_P001.txt
-```
-
-The text log includes the Participant ID, selected mode, assistant name, session end time, audio filename, and conversation turns. Ending a conversation waits briefly for final asynchronous transcription events before saving the available text.
-
-Recordings and text logs are excluded from Git by default. Always obtain participant consent and apply the retention, access-control, and deletion requirements appropriate to the deployment.
-
-## Assistant modes
-
-- **Cognitive — Logan:** direct, structured knowledge and logical support; voice `cedar` at 1.08× speed by default.
-- **Neutral — Nomi:** balanced default behavior; voice `marin` at 1.00× speed by default.
-- **Affective — Sunny:** warmer emotional and relationship support; voice `coral` at 0.93× speed by default.
-
-Each assistant begins with its specified introduction and all modes are instructed to keep every response between 20 and 30 English words. These are model instructions, so validate adherence empirically before using the demo for controlled research. The complete behavior specification is in `Agent.md`.
-
-All three modes share these explicit Realtime session settings:
-
-```text
-reasoning.effort: low
-audio.input.noise_reduction.type: far_field
-temperature: 0.8
-```
-
-These global values are maintained in `assistant_modes.py` and are included in every session request.
-
-## Transcript ordering
-
-OpenAI input transcription runs asynchronously from Realtime response generation. The interface creates transcript entries when conversation items are committed or added, then fills in the transcription when it arrives. This preserves participant/assistant turn order even when a participant transcription completes after the assistant has started responding.
-
-## Security design
-
-- `.env` is excluded from Git. Never put a real API key in `.env.example`, browser JavaScript, screenshots, or recordings.
-- The browser sends its WebRTC SDP offer to the local `/session` endpoint. Only the local server uses the permanent API key.
-- Participant IDs are validated before they are used in a filename. Path separators, spaces, and other filename characters are rejected.
-- Recording uploads are limited to 512 MB and are written through a temporary file before being moved to the final filename.
-- Text logs are limited to 5 MB, validated as UTF-8, paired to a server-issued recording stem, and never overwrite different existing content.
-- The demo does not include user authentication. If `APP_HOST` is changed to `0.0.0.0`, other devices on the same network may be able to use the API and recording endpoint. Use this mode only on a trusted network.
-- A production multi-user deployment needs authentication, request rate limits, audit logs, storage access control, retention rules, and cost controls.
-
-## Python CA certificate troubleshooting
-
-If the browser reports that the server cannot connect to OpenAI and the server log contains `CERTIFICATE_VERIFY_FAILED`, run the certificate installer included with the Python.org macOS package:
-
-```bash
-"/Applications/Python 3.8/Install Certificates.command"
-```
-
-Alternatively, configure a valid CA bundle through `SSL_CERT_FILE` in `.env`.
-
-## iPad access
-
-iPad Safari requires a trusted HTTPS origin for microphone access over a local network. The project supports TLS through these environment variables:
-
-```dotenv
-APP_HOST=0.0.0.0
-TLS_CERT_FILE=/absolute/path/to/dev-cert.pem
-TLS_KEY_FILE=/absolute/path/to/dev-key.pem
-```
-
-The certificate must cover the computer's LAN IP address or `.local` hostname, and its issuing certificate authority must be trusted by the iPad.
-
-## Configuration
-
-| Variable | Default | Purpose |
+| Condition | Order 1 | Order 2 |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | Safe placeholder | Server-only OpenAI API key |
-| `OPENAI_REALTIME_MODEL` | `gpt-realtime-2.1` | Realtime speech-to-speech model |
-| `OPENAI_REALTIME_VOICE` | `marin` | Backward-compatible fallback for the Neutral voice |
-| `OPENAI_COGNITIVE_VOICE` | `cedar` | Logan's voice |
-| `OPENAI_NEUTRAL_VOICE` | `OPENAI_REALTIME_VOICE` or `marin` | Nomi's voice |
-| `OPENAI_AFFECTIVE_VOICE` | `coral` | Sunny's voice |
-| `OPENAI_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe` | Participant transcription model |
-| `OPENAI_INPUT_LANGUAGE` | `en` | Input transcription language hint |
-| `OPENAI_SAFETY_IDENTIFIER` | `local-demo-user` | Stable, privacy-preserving local user identifier |
-| `APP_HOST` | `127.0.0.1` | Local bind address |
-| `APP_PORT` | `8000` | Local server port |
-| `TLS_CERT_FILE` / `TLS_KEY_FILE` | Empty | Optional HTTPS certificate and private key |
-| `SSL_CERT_FILE` | System default | Optional Python CA certificate bundle |
+| Cognitive | North Pole → Deserted Island | Deserted Island → North Pole |
+| Affective | Positive → Negative | Negative → Positive |
 
-## Tests
+Researcher test mode is off by default. It skips preparation waiting and shows
+the manual End activity button. Normal participant sessions do not expose that
+button. Returning to setup from either preparation or completion requires PIN
+**7890**, also displayed on the researcher setup screen. This is an
+accidental-navigation guard in the browser, not account authentication.
+The conversation and completion screens have a quiet text link back to setup.
+Returning during a conversation first saves the current task and closes its
+connection, without advancing to the next task.
 
-The `tests` directory is not loaded by the running application. It contains automated regression checks for configuration, mode prompts, filename validation, collision handling, and safe audio/text storage. Keep it in the source project so future changes can be verified; it may be omitted from a runtime-only deployment bundle.
+1. Each task has a 60-second private preparation period and a disabled Start
+   button showing the remaining time. Recording is off during preparation.
+2. Start conversation with Buzz begins the task and recording.
+3. Buzz's exact closing must finish playing before the audio, transcript and
+   event log save.
+4. After Activity 1 saves successfully, a new independent session says
+   “Let's move to the next activity.” At least three seconds separate the
+   previous closing audio and the transition request.
+5. Activity 2 has its own preparation period and Start button. Its opening
+   asks the task question without another self-introduction.
+6. Activity 2 saves and ends on the completion screen.
 
-```bash
-python3 -m unittest discover -s tests -v
+The live screen order is Buzz → voice animation → status → activity instructions.
+The status is “Buzz is listening”, “Buzz is thinking” or “Buzz is speaking”.
+It appears in bold inside a rounded rectangular chip.
+The recording notice appears directly below the 4–5 minute preparation guidance,
+left aligned and at the same text size.
+
+## Cognitive scenarios
+
+Both tasks ask for exactly three choices from the same **24-item printed list**.
+The rescue team knows the participant's location and arrives in **three days**.
+Appropriate clothing and drinking water are supplied; food and shelter are not.
+
+- Deserted Island: a warm environment.
+- North Pole: a cold environment with snow and ice.
+
+The instructions, helper questions, quantities and procedure otherwise match.
+The participant first selects three items and explains their reasoning. Buzz
+explores one relevant tradeoff at a time, without deciding for them. Normal
+completion requires the Cognitive completeness check and a spoken confirmation
+of the final three items. Suggestions are not selections. There is no official
+ranking or guaranteed survival outcome.
+
+The list retains 5 cans of Canned beans. Portable stove with fuel counts as one
+choice; Metal cooking pot is separate. The canonical insect-repellent label is
+**Bug spray**. Tent, Insulated sleeping mat, Portable stove with fuel and Metal
+cooking pot replace Magnifying glass, Hammock, Blanket and Radio respectively;
+Bug spray fills the 24th slot. Machete and Sunscreen remain.
+
+North Pole uses task ID `north_pole`, never `leaves`. New filenames and order
+IDs use that ID. Existing historical Leaves logs remain untouched. The filename
+parser recognizes legacy filenames, but Leaves cannot start a new session.
+
+## Affective conversations and participant-led ending
+
+Positive and Negative share the same ending policy. Buzz listens to the
+participant's own experience and uses specific, brief reflections without
+advice, emotion menus or repeated summaries.
+
+The ordinary target remains 4–5 minutes. Three minutes opens an optional ending
+window; 4:30 prompts convergence, and five minutes is a soft target that cannot
+interrupt speech. Ordinary Affective progression includes at least two
+substantive follow-ups and a one-time final invitation.
+
+A clear contextual “I'm good” after an invitation to continue, “nothing else to
+share”, or an explicit request to finish the current activity can end it before
+three minutes. Buzz calls `finish` with reason `participant_done`, gives a brief
+acknowledgment and the exact closing, without another confirmation or recap.
+This bypasses ordinary duration/follow-up/final-question requirements. A
+Cognitive participant-led early ending does not imply that final choices were
+confirmed. The event log distinguishes it from ordinary `completed`.
+
+The model interprets context and the browser rejects empty or ambiguous
+completion evidence. Silence, a bare OK/yes, an uncertain or short answer alone
+must not terminate an activity. Outstanding questions/accepted help still take
+priority. Explicit study/session stop or discomfort uses `stop` and never
+automatically advances. Activity-only completion may advance after all files save.
+
+## Saved files and versions
+
+Each task produces separate Audio_Record, Txt_Log and Event_Log files. Recordings may instead be m4a or ogg
+depending on browser support. Metadata includes prompt/controller versions,
+condition, task, order position, test-mode use and closing reason. Existing
+files are not overwritten; suffixes avoid collisions.
+
+`assistant_modes.py` is the configuration and prompt source of truth.
+`Agent.md` describes the current protocol. `UPDATE_NOTES.txt` records this
+release and its baseline. Superseded documents are preserved under docs/history.
+
+## Checks
+
+```sh
+python3 -m unittest discover -s tests
+node tests/test_turn_controller.js
 ```
 
-## Project structure
+The optional real-browser checks require Playwright and installed Chrome:
 
-```text
-.
-├── .env                  # Local secret configuration; never commit
-├── .env.example          # Shareable configuration template
-├── Agent.md              # Assistant mode and behavior specification
-├── Audio_Record/         # Local mixed conversation recordings
-├── Txt_Log/              # Local ordered conversation text logs
-├── server.py             # Session proxy and local artifact storage
-├── tests/
-│   └── test_server.py
-└── web/
-    ├── index.html
-    ├── app.js             # WebRTC, transcript ordering, and mixed recording
-    └── styles.css         # Minimal functional styling
+```sh
+APP_PORT=8765 python3 server.py
+# In another terminal:
+node tests/test_ui.cjs
 ```
+
+They use synthetic audio events, not a live API call or microphone recording.
+A live voice pilot remains necessary to evaluate generated wording and latency.
