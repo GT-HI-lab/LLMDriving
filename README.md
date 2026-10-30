@@ -114,6 +114,22 @@ files are not overwritten; suffixes avoid collisions.
 `Agent.md` describes the current protocol. `UPDATE_NOTES.txt` records this
 release and its baseline. Superseded documents are preserved under docs/history.
 
+## Export driving sentences
+
+`export_voice_sentences.py` exports the five starting and five ending driving
+sentences using the existing `.env` API key, Realtime model, voice, speed and
+shared voice delivery instructions. It does not need the web server running.
+
+```sh
+python -m pip install websocket-client
+python export_voice_sentences.py
+```
+
+Files are saved as `output/starting_01.wav` through `starting_05.wav` and
+`output/ending_01.wav` through `ending_05.wav` (mono, 16-bit, 24 kHz).
+Existing files are skipped. Use `--overwrite` to regenerate them or
+`--output-dir PATH` to choose another folder. Generation uses the paid API.
+
 ## Checks
 
 ```sh
