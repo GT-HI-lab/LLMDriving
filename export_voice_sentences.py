@@ -33,11 +33,11 @@ from urllib.parse import urlencode
 
 SAMPLE_RATE = 24000
 SENTENCES = (
-    ("starting_01.wav", "Hi, this is Nomi. All set—I’ll drive us home carefully."),
-    ("starting_02.wav", "Hi, this is Nomi. Ready when you are—I’ll take us home carefully."),
-    ("starting_03.wav", "Hi, this is Nomi. Let’s head home—I’ll handle the drive carefully."),
-    ("starting_04.wav", "Hi, this is Nomi. I’m ready—I’ll drive us home with care."),
-    ("starting_05.wav", "Hi, this is Nomi. All ready—I’ll take us home with care."),
+    ("starting_01.wav", "Hi, this is Buzz. All set—I’ll drive us home carefully."),
+    ("starting_02.wav", "Hi, this is Buzz. Ready when you are—I’ll take us home carefully."),
+    ("starting_03.wav", "Hi, this is Buzz. Let’s head home—I’ll handle the drive carefully."),
+    ("starting_04.wav", "Hi, this is Buzz. I’m ready—I’ll drive us home with care."),
+    ("starting_05.wav", "Hi, this is Buzz. All ready—I’ll take us home with care."),
     ("ending_01.wav", "We’ve arrived. I’m glad we traveled together."),
     ("ending_02.wav", "We’re here. I enjoyed traveling with you."),
     ("ending_03.wav", "We’ve arrived. I’m glad we shared the ride."),

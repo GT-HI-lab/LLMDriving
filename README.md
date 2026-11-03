@@ -18,6 +18,19 @@ effort and semantic VAD. This release does not change the Realtime model.
 
 ## Researcher workflow
 
+The separate [study timestamp record sheet](study_record_sheet.py) records the
+full participant procedure, including five clips and their surveys, and exports
+one CSV per participant. Double-click **study_record_sheet.py** to start it and
+open the sheet in your default browser. Python 3.8+ is required; no additional
+packages are needed. Keep its Python window open while using the sheet.
+
+You can also run `python study_record_sheet.py`. The page always opens at
+http://127.0.0.1:8766, preserving sheets previously saved at that address in the
+same browser. Session notes appear below the timeline. All timestamps and edits
+autosave in that browser; export a CSV after each participant, and use the
+backup buttons for copies of all saved sheets. The Python file contains the
+entire page and works independently of the voice application.
+
 Enter a participant ID, choose Cognitive or Affective, and choose task order.
 
 | Condition | Order 1 | Order 2 |
