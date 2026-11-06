@@ -1,5 +1,8 @@
 "use strict";
 
+// Browser-only hotfix; server prompt/controller identifiers remain unchanged.
+const BROWSER_BUILD_VERSION = "contextual-endings-2026-11-06-v20.3";
+
 const researcherView = document.querySelector("#researcherView");
 const participantInstructionView = document.querySelector(
   "#participantInstructionView",
@@ -157,6 +160,10 @@ let handledStudyCalls = new Set();
 let currentControlItemId = null;
 let controlItemSequence = 0;
 let unclearAnswerItemIds = new Set();
+let endingRepairAttempts = new Set();
+let responseRequestedAtMilliseconds = null;
+let responseWaitWarningSent = false;
+let responseRequestTimes = new Map();
 
 const STUDY_PROGRESS_TOOL = {
   type: "function",
@@ -167,10 +174,15 @@ const STUDY_PROGRESS_TOOL = {
     properties: {
       action: { type: "string", enum: ["check_answered", "finish", "stop", "repair_needed"] },
       reason: { type: "string", enum: ["completed", "participant_done", "participant_stop", "discomfort"] },
+      reply_intent: {
+        type: "string",
+        enum: ["activity_done", "study_stop", "discomfort", "check_resolved", "final_confirmed", "needs_response", "repeat_requested"],
+        description: "Interpret the latest participant reply using the preceding conversation, not keyword matching. activity_done means they choose to finish THIS activity; study_stop means stop the session/remaining activities; discomfort means they cannot comfortably continue now, not an emotion inside their story; check_resolved means the delivered final sharing/completeness question is resolved; final_confirmed means they confirm the latest three items read aloud; needs_response means a question, revision, accepted help, more sharing, uncertainty or request for time still needs attention; repeat_requested means repeat the current final sharing/completeness/item-confirmation question, not answer it. Quoted/past statements about ending are not requests to end this conversation. In Cognitive, nothing to reconsider at the completeness check is check_resolved, not final_confirmed or an early exit."
+      },
       evidence: { type: "string", description: "Brief evidence in the latest participant reply that this step is complete or they want to stop; a yes to sharing more is NOT completion." },
       acknowledgment: { type: "string", description: "Required for finish/stop: a non-empty response of at most 40 words. Respond specifically to additional substantive sharing after the final invitation; generic thanks alone is insufficient for that content. If nothing more to add, a brief Okay is sufficient in either condition. In Affective, do not summarize the memory or add a retrospective reflection after no/nothing else. The fixed Affective closing already thanks them for sharing. For stop, briefly respect the boundary. No question or closing phrase. Empty allowed only for check_answered/repair_needed." },
     },
-    required: ["action", "reason", "evidence", "acknowledgment"],
+    required: ["action", "reason", "reply_intent", "evidence", "acknowledgment"],
     additionalProperties: false,
   },
 };
@@ -755,6 +767,10 @@ function resetEndingController() {
   currentControlItemId = null;
   controlItemSequence = 0;
   unclearAnswerItemIds.clear();
+  endingRepairAttempts.clear();
+  responseRequestedAtMilliseconds = null;
+  responseWaitWarningSent = false;
+  responseRequestTimes.clear();
 }
 
 function startConversationClock() {
@@ -769,6 +785,15 @@ function pacingTick() {
   clearPacingTimer();
   if (isStopping || topicStartedAtMilliseconds === null || conversationEndedAtMilliseconds !== null) return;
   sendPacingControlIfNeeded();
+  if (responseInProgress && !assistantAudioPlaying && responseRequestedAtMilliseconds !== null &&
+      !responseWaitWarningSent && Date.now() - responseRequestedAtMilliseconds >= 10000) {
+    responseWaitWarningSent = true;
+    recordEvent("assistant_first_audio_delayed", {
+      response_id: activeResponseId,
+      waiting_ms: Date.now() - responseRequestedAtMilliseconds,
+      blockers: participantResponseBlockers(),
+    });
+  }
   // A natural idle pause may start the final invitation, but never answer it.
   if (endingStage === "need_check" && !listeningRepair && !participantResponseBlockers().length &&
       !queuedParticipantResponses.length && Date.now() - lastConversationActivityAt >= 8000) {
@@ -881,27 +906,10 @@ function commitClosingAcknowledgmentPlayback(responseId) {
 
 // Detection starts a conservative listening hold; it never decides that an
 // answer was delivered or resolved. Playback + a later participant turn do that.
-function requiresListeningRepair(text) {
-  const raw = String(text || "");
-  const normalized = normalizeSpeech(raw);
-  return /[?]/.test(raw) ||
-    /^(?:wait\b|so (?:you|you're|you are)|(?:why|how|what|when|where|could|can|would|should|does|do|is|are)\b)/.test(normalized) ||
-    /\b(?:not answering|didn't answer|did not answer|haven't answered|not listening|are you listening|doesn't work|does not work|don't understand|do not understand|confused|repeat|say that again|let me think|need more time|hold on|you missed|you misunderstood)\b/.test(normalized);
-}
-
 function beginListeningRepair(itemIds, batch, source) {
   listeningRepair = { itemIds: [...itemIds], batch, source, playbackResponseId: null };
   pendingControlledResponse = null;
   recordEvent("listening_repair_required", { participant_item_ids: itemIds, response_batch: batch, source, ending_stage: endingStage });
-}
-
-function acceptedHelpOffer(text) {
-  const answer = normalizeSpeech(text);
-  const offer = normalizeSpeech(deliveredAssistantText);
-  return /\b(?:yes|yeah|yep|sure|okay|ok|please|go ahead|sounds good)\b/.test(answer) &&
-    !/\b(?:no|not|don't|do not|stop|bye)\b/.test(answer) &&
-    /\b(?:i can|we can|shall i|would you like me to|want me to|let me)\b/.test(offer) &&
-    /\b(?:help|explain|simplify|smooth|rewrite|rephrase|show|demonstrate|fold|make|put|give|adjust)\b/.test(offer);
 }
 
 function commitDeliveredSpeech(responseId) {
@@ -915,13 +923,8 @@ function commitDeliveredSpeech(responseId) {
 
 function updateListeningRepair(requests) {
   const ids = requests.map(r => r.itemId);
-  const text = ids.map(id => (transcriptItems.get(id) || {}).text || "").join(" ");
   if (ids.some(id => unclearAnswerItemIds.has(id))) {
     beginListeningRepair(ids, participantResponseBatchCount, "unclear_short_answer");
-  } else if (acceptedHelpOffer(text)) {
-    beginListeningRepair(ids, participantResponseBatchCount, "accepted_assistant_offer");
-  } else if (requiresListeningRepair(text)) {
-    beginListeningRepair(ids, participantResponseBatchCount, "participant_question_or_feedback");
   } else if (listeningRepair && listeningRepair.playbackResponseId &&
              participantResponseBatchCount > listeningRepair.batch) {
     recordEvent("listening_repair_followup_received", {
@@ -962,11 +965,29 @@ function endingControlText() {
       "previous reflection or duplicate the fixed closing's thanks in the acknowledgment. For stop, respect the boundary briefly. "
     : "Respond to substantive content specifically; if nothing more, Okay is enough. ";
   const common = "[STUDY ENDING CONTROL] Stage: " + endingStage +
+    ". CONTEXTUAL TOOL CONTRACT: Every study_progress call MUST include reply_intent, " +
+    "interpreted from the latest reply in the preceding conversational context. Never require a particular " +
+    "English phrase. A quoted/past 'done', an emotion within a memory, silence, or a short acknowledgment " +
+    "alone is not an activity-ending request. A brief answer CAN resolve an earlier question when its " +
+    "meaning is clear from context, including after an earlier attempt to finish. " +
+    "Use finish/participant_done/activity_done for a contextual wish to end only this activity; " +
+    "stop/participant_stop/study_stop or stop/discomfort/discomfort for session boundaries. " +
+    "For ordinary Affective completion use finish/completed/check_resolved after the delivered sharing invitation; " +
+    "respond to any final content in acknowledgment. For Cognitive use check_answered/completed/check_resolved " +
+    "after the completeness check, then finish/completed/final_confirmed only after the participant confirms " +
+    "the final three items read aloud. Nothing to reconsider at the Cognitive completeness check is not " +
+    "an early exit or final item confirmation unless they explicitly choose to end the activity. " +
+    "For more sharing, an unresolved question/correction, an accepted help offer, or a request for time, " +
+    "use repair_needed/completed/needs_response when a hold is needed; answer aloud in the next response " +
+    "(use repair_needed/completed/repeat_requested if they need the current final question repeated) " +
+    "and wait, rather than asserting completion. Interpret requests such as 'Done?' in context: answer " +
+    "their completion-status question; if they have already finished and need only confirmation, " +
+    "the acknowledgment may provide that confirmation with the authorized closing. " +
     ". Never say the exact closing or a substitute farewell. Use study_progress silently instead; " +
     "do not speak in the same response as a tool call. Stop/discomfort requests override all stages. " +
     "PARTICIPANT-LED ENDING overrides duration, follow-up counts, and final questions: if the latest " +
-    "reply clearly means they have nothing more to share or want this activity to finish, call finish " +
-    "with reason participant_done and a brief Okay acknowledgment. Do not ask again or repeat a recap. " +
+    "reply clearly means they choose to finish this activity, call finish " +
+    "with reason participant_done, reply_intent activity_done, and a brief acknowledgment. Do not ask again or repeat a recap. " +
     "Use the preceding conversation to interpret I'm good; describing a feeling, a bare OK/yes, " +
     "a short answer, uncertainty or silence alone does not mean done. A study/session stop or discomfort " +
     "uses stop, never participant_done. Answer genuine questions and fulfil accepted help first. " +
@@ -985,7 +1006,8 @@ function endingControlText() {
   if (listeningRepair) return common +
     "LISTENING HOLD: Fulfil any accepted help offer, answer the latest unresolved question or address the specific complaint now, " +
     "using the conversation history to recover the question you missed. A brief apology alone is not repair. " +
-    "Do not ask the completeness check, final rehearsal, or item confirmation; do not call check_answered or finish. " +
+    "Do not ask the completeness check, final rehearsal, or item confirmation; do not claim ordinary completion. " +
+    "An explicit choice to end this activity or stop the session still overrides this hold via the matching intent. " +
     "After the actual answer, wait for the participant without routinely offering further help. " +
     "If they only need time, acknowledge and wait. If they request a repeat, repeat the requested content. " +
     "The four/five-minute clock cannot override this hold.";
@@ -1040,6 +1062,9 @@ function requestControlledResponse(kind, text, sourceControl) {
   pendingControlledResponse = null;
   issuedResponseControl = sourceControl
     ? { ...sourceControl, kind } : makeResponseControl([], kind);
+  if (kind === "listening_repair" && listeningRepair) {
+    issuedResponseControl.repairBatch = listeningRepair.batch;
+  }
   responseInProgress = true;
   activeResponseKind = "conversation";
   activeParticipantResponseRequests = [];
@@ -1059,10 +1084,25 @@ function requestControlledResponse(kind, text, sourceControl) {
       "and an acknowledgment following the mode-specific guidance above. In Affective finish, respond to " +
       "additional content if any; after no/nothing else, use a brief Okay without recapping the memory. Keep it under 40 words, " +
       "without a question or the exact closing phrase. Do not infer a new participant answer.");
+  } else if (kind === "ending_repair") {
+    response.tools = [currentStudyProgressTool()];
+    response.tool_choice = "auto";
+    sendHiddenControl(endingControlText() +
+      " The previous transition was rejected. Re-evaluate the SAME participant reply using the current stage. " +
+      "If a transition is justified, call study_progress silently. Otherwise ask one concise clarification " +
+      "or answer their unresolved question. Do not say Okay repeatedly, narrate internal handling, or claim completion.");
+  } else if (kind === "ending_clarification") {
+    response.instructions = "Using the conversation and current study stage (" + endingStage +
+      "), answer any unresolved question or ask ONE short clarification appropriate to that stage. " +
+      "If a Cognitive final selection still needs confirmation, clarify the actual three items; do not invent them. " +
+      "Do not claim completion, narrate internal processing, repeat acknowledgments, or force a participant " +
+      "who requests to stop to continue. Wait for their answer.";
   } else {
     sendHiddenControl(endingControlText());
   }
   dataChannel.send(JSON.stringify({ type: "response.create", response }));
+  responseRequestedAtMilliseconds = Date.now();
+  responseWaitWarningSent = false;
   lastConversationActivityAt = Date.now();
   recordEvent("controlled_response_requested", { kind, ending_stage: endingStage });
 }
@@ -1083,89 +1123,95 @@ function commitEndingPlayback(responseId) {
 }
 
 
-function participantDoneEvidence(text) {
-  const answer = normalizeSpeech(text);
-  // The model must also request participant_done based on conversational context.
-  // These guards reject empty/ambiguous replies and whole-study stop requests.
-  if (!answer || /^(?:ok|okay|yes|yeah|yep|sure|not much|i don't know)$/.test(answer)) return false;
-  if (/\b(?:study|experiment|session|all activities)\b/.test(answer) ||
-      /\b(?:uncomfortable|distressed|stop everything)\b/.test(answer)) return false;
-  if (/\b(?:nothing (?:else|more)(?: to (?:add|share|say))?|no more to (?:add|share|say)|(?:i'm|i am) done|(?:i don't|i do not|don't|do not) (?:want|wish) to (?:continue|talk|share)|(?:finish|end|stop) (?:this|the) (?:activity|task|conversation)|move (?:on|to the next activity))\b/.test(answer)) return true;
-  const invitation = normalizeSpeech(deliveredAssistantText);
-  return /^(?:(?:um|uh|no|nope) )*(?:i'm good|i am good|i'm all good|i am all good|no|nope|no thanks|that's all|that is all)$/.test(answer) &&
-    /\b(?:anything else|anything more|say (?:a bit )?more|share (?:a bit )?more|tell me more|linger|like to (?:continue|add|share)|want to (?:continue|add|share))\b/.test(invitation);
-}
-
 function handleStudyProgress(call, control) {
   if (!call.call_id || handledStudyCalls.has(call.call_id)) return;
   handledStudyCalls.add(call.call_id);
   let args = {};
   try { args = JSON.parse(call.arguments); } catch (_) { /* rejected below */ }
-  const freshAnswer = control && control.itemIds.length > 0 &&
+  if (!args || typeof args !== "object" || Array.isArray(args)) args = {};
+  const currentAnswer = control && Array.isArray(control.itemIds) && control.itemIds.length > 0 &&
+    control.batch === participantResponseBatchCount && control.itemIds.every(id => {
+      const item = transcriptItems.get(id);
+      return item && item.role === "user" && !item.ignored && !item.pending && item.text.trim();
+    });
+  const freshAnswer = currentAnswer &&
     control.batch > endingAnswerAfterBatch && control.stage === endingStage;
-  const answerText = control ? normalizeSpeech(control.itemIds.map((id) =>
-    (transcriptItems.get(id) || {}).text || "").join(" ")) : "";
-  const needsMoreTimeOrRepair = /\b(?:could you repeat|can you repeat|please repeat|say that again|what are you asking|what do you mean|give me a moment|give me a minute|hold on|let me think|can i think|i need more time)\b/.test(answerText);
-  const bareYesNeedsContent = /^(?:yes|yeah|yep|sure|yes please|i would|i would like to|yes i would|yes i do|yes i can try)$/.test(answerText) &&
-    activeAssistantMode === "affective";
   const valid = ["check_answered", "finish", "stop", "repair_needed"].includes(args.action) &&
+    ["completed", "participant_done", "participant_stop", "discomfort"].includes(args.reason) &&
+    ["activity_done", "study_stop", "discomfort", "check_resolved", "final_confirmed", "needs_response", "repeat_requested"].includes(args.reply_intent) &&
     typeof args.evidence === "string" && args.evidence.trim() &&
     typeof args.acknowledgment === "string";
   const interrupted = speechInProgress || pendingTranscriptionItemIds.size || queuedParticipantResponses.length;
   let accepted = false;
   let acknowledgmentRequired = false;
-  if (valid && args.action === "repair_needed" && control && control.itemIds.length && !interrupted) {
+  const rejectionReasons = [];
+  if (!valid) rejectionReasons.push("invalid_tool_arguments");
+  if (!currentAnswer) rejectionReasons.push("missing_or_stale_participant_answer");
+  if (interrupted) rejectionReasons.push("participant_input_in_progress");
+  if (closingAuthorized) rejectionReasons.push("closing_already_authorized");
+  if (valid && currentAnswer && !interrupted && !closingAuthorized &&
+      args.action === "repair_needed" && ["needs_response", "repeat_requested"].includes(args.reply_intent) && args.reason === "completed") {
     beginListeningRepair(control.itemIds, control.batch, "model_requested");
+    listeningRepair.repeatCurrentQuestion = args.reply_intent === "repeat_requested";
     dataChannel.send(JSON.stringify({ type: "conversation.item.create", item: {
       type: "function_call_output", call_id: call.call_id,
       output: JSON.stringify({ accepted: true, instruction: "Answer the unresolved question aloud; remain at the same ending stage." }),
     } }));
-    pendingControlledResponse = { kind: "listening_repair" };
-    recordEvent("study_progress_decision", { action: args.action, accepted: true, ending_stage: endingStage });
+    pendingControlledResponse = { kind: "listening_repair", sourceControl: control };
+    recordEvent("study_progress_decision", { action: args.action, accepted: true,
+      reason: args.reason, reply_intent: args.reply_intent, evidence: args.evidence,
+      ending_stage: endingStage, rejection_reasons: [] });
     return;
   }
-  if (valid && !interrupted && !closingAuthorized) {
-    if (args.action === "stop" && control && control.itemIds.length &&
-        ["participant_stop", "discomfort"].includes(args.reason)) {
+  // Meaning comes from the model's contextual intent, never from participant
+  // wording. Validate action/intent consistency, fresh input and playback stage.
+  if (!rejectionReasons.length) {
+    if (args.action === "stop" &&
+        ((args.reason === "participant_stop" && args.reply_intent === "study_stop") ||
+         (args.reason === "discomfort" && args.reply_intent === "discomfort"))) {
       accepted = true;
-      closingReason = args.reason;
     } else if (args.action === "finish" && args.reason === "participant_done" &&
-               !listeningRepair && freshAnswer && !needsMoreTimeOrRepair &&
-               participantDoneEvidence(answerText)) {
+               args.reply_intent === "activity_done") {
+      // An explicit activity boundary overrides pacing and repair holds in BOTH modes.
       accepted = true;
-      closingReason = "participant_done";
-    } else if (!listeningRepair && freshAnswer && answerText && !needsMoreTimeOrRepair &&
-               !(args.action === "finish" && bareYesNeedsContent) && args.reason === "completed" &&
-               (pacingElapsedSeconds() >= effectivePacingConfig().minimum_synthesis_elapsed_seconds ||
-                endingStage === "waiting_check" || endingStage === "waiting_final")) {
-      if (args.action === "check_answered" && activeAssistantMode === "cognitive" && endingStage === "waiting_check") {
+    } else if (args.reason === "completed" && !listeningRepair && freshAnswer) {
+      if (args.action === "check_answered" && args.reply_intent === "check_resolved" &&
+          activeAssistantMode === "cognitive" && endingStage === "waiting_check") {
         accepted = true;
         endingStage = "need_final";
       } else if (args.action === "finish" &&
-        ((activeAssistantMode === "affective" && endingStage === "waiting_check") ||
-         (activeAssistantMode === "cognitive" && endingStage === "waiting_final"))) {
+        ((activeAssistantMode === "affective" && endingStage === "waiting_check" && args.reply_intent === "check_resolved") ||
+         (activeAssistantMode === "cognitive" && endingStage === "waiting_final" && args.reply_intent === "final_confirmed"))) {
         accepted = true;
-        closingReason = "completed";
       }
+    }
+    if (!accepted) {
+      if (["needs_response", "repeat_requested"].includes(args.reply_intent)) rejectionReasons.push("reply_needs_response");
+      if (listeningRepair) rejectionReasons.push("listening_repair_pending");
+      if (!freshAnswer) rejectionReasons.push("answer_not_after_current_question");
+      rejectionReasons.push("action_intent_or_stage_mismatch");
     }
   }
   if (accepted && ["finish", "stop"].includes(args.action) &&
       !validClosingAcknowledgment(args.acknowledgment)) {
     accepted = false;
     acknowledgmentRequired = true;
+    rejectionReasons.push("invalid_closing_acknowledgment");
   }
   dataChannel.send(JSON.stringify({ type: "conversation.item.create", item: {
     type: "function_call_output", call_id: call.call_id,
-    output: JSON.stringify({ accepted, stage: endingStage,
+    output: JSON.stringify({ accepted, stage: endingStage, rejection_reasons: rejectionReasons,
       instruction: accepted ? "Wait for the browser-controlled response." : acknowledgmentRequired
         ? "Do not close yet. Regenerate a short content acknowledgment; the participant need not answer again."
         : "Do not close. Follow the current stage and latest participant speech." }),
   } }));
   recordEvent("study_progress_decision", { action: args.action, accepted,
-    reason: args.reason, evidence: args.evidence, ending_stage: endingStage,
+    reason: args.reason, reply_intent: args.reply_intent, evidence: args.evidence, ending_stage: endingStage,
+    rejection_reasons: rejectionReasons,
     blocked_by_listening_repair: Boolean(listeningRepair),
     acknowledgment_required: acknowledgmentRequired });
   if (!accepted) {
+    if (closingAuthorized || isStopping) return;
     if (acknowledgmentRequired && !interrupted) {
       acknowledgmentRetryCount += 1;
       if (acknowledgmentRetryCount <= 2) {
@@ -1178,7 +1224,15 @@ function handleStudyProgress(call, control) {
         void stopSession({ manualStop: false, advanceToNextTask: false,
           participantFinalStatus: "Please return the device to the researcher." });
       }
-    } else if (!interrupted) pendingControlledResponse = { kind: "ending_repair" };
+    } else if (!interrupted && currentAnswer) {
+      const retryKey = control.batch + ":" + control.stage;
+      if (!endingRepairAttempts.has(retryKey)) {
+        endingRepairAttempts.add(retryKey);
+        pendingControlledResponse = { kind: "ending_repair", sourceControl: control };
+      } else {
+        pendingControlledResponse = { kind: "ending_clarification", sourceControl: control };
+      }
+    }
     return;
   }
   if (args.action === "check_answered") {
@@ -1186,6 +1240,7 @@ function handleStudyProgress(call, control) {
     return;
   }
   closingPreviousStage = endingStage;
+  closingReason = args.reason;
   acknowledgmentRetryCount = 0;
   closingAuthorized = true;
   endingStage = "closing";
@@ -1255,6 +1310,32 @@ function sendParticipantResponseRequest(requests) {
     return;
   }
 
+  // A filler/unclear chunk must not invalidate a clear answer in the same batch.
+  const hasClearAnswer = requests.some(request => {
+    const text = (transcriptItems.get(request.itemId) || {}).text || "";
+    return !unclearAnswerItemIds.has(request.itemId) && hasMeaningfulTranscript(text) &&
+      !isClearlyIncompleteTranscript(text);
+  });
+  if (hasClearAnswer) {
+    let supersededUnclearFragment = false;
+    requests = requests.filter(request => {
+      if (!unclearAnswerItemIds.has(request.itemId)) return true;
+      supersededUnclearFragment = true;
+      unclearAnswerItemIds.delete(request.itemId);
+      const record = transcriptItems.get(request.itemId);
+      if (record) {
+        record.ignored = true;
+        record.ignoreReason = "unclear_fragment_superseded_by_clear_answer";
+      }
+      deleteIgnoredParticipantItem(request.itemId, "unclear_fragment_superseded_by_clear_answer");
+      recordEvent("unclear_fragment_superseded", { item_id: request.itemId });
+      return false;
+    });
+    if (supersededUnclearFragment && listeningRepair && listeningRepair.source === "unclear_short_answer") {
+      listeningRepair = null;
+      recordEvent("unclear_answer_resolved_by_continuation");
+    }
+  }
   const itemIds = requests.map((request) => request.itemId);
   const latestRequest = requests[requests.length - 1];
   const responseKind = "conversation";
@@ -1298,6 +1379,8 @@ function sendParticipantResponseRequest(requests) {
       response: responsePayload,
     }),
   );
+  responseRequestedAtMilliseconds = Date.now();
+  responseWaitWarningSent = false;
   diagnosticLog(
     itemIds.length > 1
       ? "Requested one response after coalescing " +
@@ -1562,6 +1645,9 @@ function handleRealtimeEvent(event) {
     case "response.created":
       responseInProgress = true;
       activeResponseId = event.response && event.response.id;
+      if (activeResponseId && responseRequestedAtMilliseconds !== null) {
+        responseRequestTimes.set(activeResponseId, responseRequestedAtMilliseconds);
+      }
       if (activeResponseId && issuedResponseControl) {
         responseControls.set(activeResponseId, issuedResponseControl);
         if (issuedResponseControl.kind === "closing") closingResponseId = activeResponseId;
@@ -1635,9 +1721,7 @@ function handleRealtimeEvent(event) {
         const scriptedEnding = [studyConfig.affective_final_check, studyConfig.cognitive_completeness_check,
           "To confirm, your final three items are", currentExactClosing()]
           .filter(Boolean).some(text => normalizedTranscript.includes(normalizeSpeech(text)));
-        const repairInput = listeningRepair ? listeningRepair.itemIds.map(id =>
-          (transcriptItems.get(id) || {}).text || "").join(" ") : "";
-        const requestedRepeat = /repeat|say that again/i.test(repairInput);
+        const requestedRepeat = Boolean(listeningRepair && listeningRepair.repeatCurrentQuestion);
         const repeatTarget = endingStage === "waiting_check"
           ? (activeAssistantMode === "affective" ? studyConfig.affective_final_check : studyConfig.cognitive_completeness_check)
           : endingStage === "waiting_final" ? "To confirm, your final three items are" : null;
@@ -1711,6 +1795,7 @@ function handleRealtimeEvent(event) {
       recordEvent("assistant_response_completed", {
         response_id: response.id,
         status: response.status,
+        status_details: cloneForStudyLog(response.status_details || null),
         metadata: response.metadata,
         output_item_count: outputItems.length,
         output_items: outputItems,
@@ -1766,6 +1851,14 @@ function handleRealtimeEvent(event) {
     }
     case "output_audio_buffer.started":
       assistantAudioPlaying = true;
+      if (responseRequestTimes.has(event.response_id)) {
+        recordEvent("assistant_first_audio_latency", {
+          response_id: event.response_id,
+          latency_ms: Date.now() - responseRequestTimes.get(event.response_id),
+        });
+        responseRequestTimes.delete(event.response_id);
+        if (activeResponseId === event.response_id) responseRequestedAtMilliseconds = null;
+      }
       if (transitionPlaybackPending && taskTransitionTiming) {
         const startedAt = Date.now();
         taskTransitionTiming.audio_started_at = new Date(startedAt).toISOString();
@@ -2316,6 +2409,7 @@ function buildEventLog(recordingResult, textResult) {
 
   return {
     schema_version: "1.1",
+    browser_build_version: BROWSER_BUILD_VERSION,
     prompt_version: studyConfig.prompt_version,
     controller_version: studyConfig.controller_version,
     participant_id: activeParticipantId,
