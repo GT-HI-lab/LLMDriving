@@ -33,16 +33,29 @@ from urllib.parse import urlencode
 
 SAMPLE_RATE = 24000
 SENTENCES = (
-    ("starting_01.wav", "Hi, this is Buzz. All set—I’ll drive us home carefully."),
-    ("starting_02.wav", "Hi, this is Buzz. Ready when you are—I’ll take us home carefully."),
-    ("starting_03.wav", "Hi, this is Buzz. Let’s head home—I’ll handle the drive carefully."),
-    ("starting_04.wav", "Hi, this is Buzz. I’m ready—I’ll drive us home with care."),
-    ("starting_05.wav", "Hi, this is Buzz. All ready—I’ll take us home with care."),
-    ("ending_01.wav", "We’ve arrived. I’m glad we traveled together."),
-    ("ending_02.wav", "We’re here. I enjoyed traveling with you."),
-    ("ending_03.wav", "We’ve arrived. I’m glad we shared the ride."),
-    ("ending_04.wav", "We’re home. I enjoyed making the trip together."),
-    ("ending_05.wav", "We’ve arrived. It was nice traveling with you."),
+    ## Starting and ending of formal drives
+    # ("starting_01.wav", "Hi, this is Buzz. All set—I’ll drive us home carefully."),
+    # ("starting_02.wav", "Hi, this is Buzz. Ready when you are—I’ll take us home carefully."),
+    # ("starting_03.wav", "Hi, this is Buzz. Let’s head home—I’ll handle the drive carefully."),
+    # ("starting_04.wav", "Hi, this is Buzz. I’m ready—I’ll drive us home with care."),
+    # ("starting_05.wav", "Hi, this is Buzz. All ready—I’ll take us home with care."),
+    # ("ending_01.wav", "We’ve arrived. I’m glad we traveled together."),
+    # ("ending_02.wav", "We’re here. I enjoyed traveling with you."),
+    # ("ending_03.wav", "We’ve arrived. I’m glad we shared the ride."),
+    # ("ending_04.wav", "We’re home. I enjoyed making the trip together."),
+    # ("ending_05.wav", "We’ve arrived. It was nice traveling with you."),
+
+    ##Practice Tutorials
+    ("Opening.wav", "Hi, I’m Buzz, an AI agent. I’ll accompany and guide you during the practice drive. Let’s practice switching between automated and manual driving."),
+    ("Intro_01.wav", "Auto mode is now active, and the vehicle is automated."),
+    ("Intro_02.wav", "Under this auto mode, the car can change lanes automatically when identified obstacles, or stop at traffic lights."),
+    ("TakeOver_01.wav", "Please press the brake pedal or the Aux 1 button to exit automated mode and take control."),
+    ("TakeOver_02.wav", "Automated mode is now off. You are controlling the car."),
+    ("HandOver_01.wav", "When you’re ready, please press the Aux 1 button to return control to automated mode."),
+    ("HandOver_02.wav", "Auto mode is active again. You just handed over to the automation."),
+    ("MorePractice.wav", "Great, now you know how to take over from auto mode and hand over back. You may try and practice again in this practice session."),
+    ("Ending.wav", "Great, the practice session is finished. During the study, you may take control whenever you believe it is necessary."),
+    
 )
 
 
