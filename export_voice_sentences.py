@@ -46,9 +46,9 @@ SENTENCES = (
     # ("ending_05.wav", "We’ve arrived. It was nice traveling with you."),
 
     ##Practice Tutorials
-    ("Opening.wav", "Hi, I’m Buzz, an AI agent. I’ll accompany and guide you during the practice drive. Let’s practice switching between automated and manual driving."),
-    ("Intro_01.wav", "Auto mode is now active, and the vehicle is automated."),
-    ("Intro_02.wav", "Under this auto mode, the car can change lanes automatically when identified obstacles, or stop at traffic lights."),
+    ("Opening.wav", "Hi, I’m Buzz, your AI agent accompanying you in the vehicle. I’ll now assist you during the drive. I’ll guide you through this practice session as you learn to switch between automated and manual driving."),
+    ("Intro_01.wav", "Auto mode is now active, and the vehicle is driving automatically."),
+    ("Intro_02.wav", "In auto mode, the vehicle controls the steering and speed to stay in its lane and maintain a safe distance from other vehicles. It can also change lanes to avoid detected obstacles and stop at traffic lights."),
     ("TakeOver_01.wav", "Please press the brake pedal or the Aux 1 button to exit automated mode and take control."),
     ("TakeOver_02.wav", "Automated mode is now off. You are controlling the car."),
     ("HandOver_01.wav", "When you’re ready, please press the Aux 1 button to return control to automated mode."),
